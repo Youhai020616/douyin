@@ -37,7 +37,7 @@ VIDEO_COMMENTS_URL = f"{API_DOMAIN}/aweme/v1/web/comment/list/"
 USER_PROFILE_URL = f"{API_DOMAIN}/aweme/v1/web/user/profile/other/"
 USER_POSTS_URL = f"{API_DOMAIN}/aweme/v1/web/aweme/post/"
 TRENDING_URL = f"{API_DOMAIN}/aweme/v1/web/hot/search/list/"
-LIVE_INFO_URL = f"{API_DOMAIN}/webcast/room/web/enter/"
+LIVE_INFO_URL = "https://live.douyin.com/webcast/room/web/enter/"
 FEED_URL = f"{API_DOMAIN}/aweme/v1/web/tab/feed/"
 SUGGEST_URL = f"{API_DOMAIN}/aweme/v1/web/api/suggest_words/"
 
@@ -544,11 +544,18 @@ class DouyinAPIClient:
         获取直播间信息。
 
         Args:
-            web_rid: 直播间 ID (URL 中的数字)
+            web_rid: 直播间 ID (URL 中的数字, 如 live.douyin.com/123456789)
         """
         params = {
             **get_base_params(),
+            "aid": "6383",
+            "app_name": "douyin_web",
+            "live_id": "1",
+            "device_platform": "web",
+            "enter_from": "web_live",
             "web_rid": web_rid,
+            "room_id_str": "",
+            "enter_source": "",
         }
         data = self._get(LIVE_INFO_URL, params=params)
 

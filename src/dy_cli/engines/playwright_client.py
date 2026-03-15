@@ -472,35 +472,81 @@ class PlaywrightClient:
             page = await context.new_page()
 
             try:
-                await page.goto(self.ANALYTICS_URL, wait_until="domcontentloaded")
-                await page.wait_for_timeout(5000)
+                # First go to creator center to establish session
+                await page.goto(self.CREATOR_URL, wait_until="domcontentloaded")
+                await page.wait_for_timeout(3000)
 
                 # Check if logged in
                 if await page.get_by_text("扫码登录").count() > 0:
                     raise PlaywrightError("Cookie 已失效")
 
-                # Extract data from the page
+                # Navigate to analytics page
+                await page.goto(self.ANALYTICS_URL, wait_until="domcontentloaded")
+                await page.wait_for_timeout(5000)
+
+                # Try clicking "作品数据" tab if present
+                try:
+                    content_tab = page.locator('text=作品数据').first
+                    if await content_tab.count() > 0:
+                        await content_tab.click()
+                        await page.wait_for_timeout(3000)
+                except Exception:
+                    pass
+
+                # Extract data from the page — try multiple selectors
                 data = await page.evaluate("""() => {
                     const rows = [];
-                    // Try to find content data tables
-                    const items = document.querySelectorAll('[class*="content-item"], [class*="data-item"], tr');
-                    items.forEach(item => {
-                        const cells = item.querySelectorAll('td, [class*="cell"], [class*="col"]');
+
+                    // Strategy 1: table rows
+                    document.querySelectorAll('table tr, [class*="table"] tr').forEach(tr => {
+                        const cells = tr.querySelectorAll('td');
                         if (cells.length >= 3) {
-                            const row = {};
                             const texts = Array.from(cells).map(c => c.textContent.trim());
-                            row['标题'] = texts[0] || '-';
-                            row['发布时间'] = texts[1] || '-';
-                            row['播放'] = texts[2] || '-';
-                            row['完播率'] = texts[3] || '-';
-                            row['点赞'] = texts[4] || '-';
-                            row['评论'] = texts[5] || '-';
-                            row['分享'] = texts[6] || '-';
-                            row['涨粉'] = texts[7] || '-';
-                            rows.push(row);
+                            rows.push({
+                                '标题': texts[0] || '-',
+                                '发布时间': texts[1] || '-',
+                                '播放': texts[2] || '-',
+                                '完播率': texts[3] || '-',
+                                '点赞': texts[4] || '-',
+                                '评论': texts[5] || '-',
+                                '分享': texts[6] || '-',
+                                '涨粉': texts[7] || '-',
+                            });
                         }
                     });
-                    return { rows: rows };
+
+                    // Strategy 2: card-style content items
+                    if (rows.length === 0) {
+                        document.querySelectorAll('[class*="content-card"], [class*="item-wrap"], [class*="data-row"]').forEach(item => {
+                            const title = item.querySelector('[class*="title"]')?.textContent?.trim() || '-';
+                            const numbers = [];
+                            item.querySelectorAll('[class*="num"], [class*="count"], [class*="data"]').forEach(n => {
+                                numbers.push(n.textContent.trim());
+                            });
+                            if (title !== '-' || numbers.length > 0) {
+                                rows.push({
+                                    '标题': title,
+                                    '发布时间': numbers[0] || '-',
+                                    '播放': numbers[1] || '-',
+                                    '完播率': numbers[2] || '-',
+                                    '点赞': numbers[3] || '-',
+                                    '评论': numbers[4] || '-',
+                                    '分享': numbers[5] || '-',
+                                    '涨粉': numbers[6] || '-',
+                                });
+                            }
+                        });
+                    }
+
+                    // Get summary stats
+                    const summary = {};
+                    document.querySelectorAll('[class*="overview"] [class*="item"], [class*="summary"] [class*="item"]').forEach(item => {
+                        const label = item.querySelector('[class*="label"], [class*="name"]')?.textContent?.trim();
+                        const value = item.querySelector('[class*="value"], [class*="num"]')?.textContent?.trim();
+                        if (label && value) summary[label] = value;
+                    });
+
+                    return { rows, summary, url: window.location.href };
                 }""")
 
                 return data
