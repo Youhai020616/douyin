@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "dy-cli"
-version = "0.2.1"
+version = "0.2.2"
 description = "抖音命令行工具 — 发布、搜索、下载、互动、数据分析、热榜、直播"
 readme = "README.md"
 license = "MIT"

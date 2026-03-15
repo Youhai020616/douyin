@@ -71,13 +71,19 @@ def search(keyword, sort, pub_time, search_type, count, account, as_json, output
     data_list = result.get("data", [])
 
     if search_type == "user":
-        # 用户搜索: data[].user_list[].user_info
+        # 用户搜索: 专用 endpoint 返回顶层 user_list[].user_info
         users = []
-        for item in data_list:
-            for u in item.get("user_list", []):
-                ui = u.get("user_info", {})
-                if ui:
-                    users.append(ui)
+        for u in result.get("user_list", []):
+            ui = u.get("user_info", {})
+            if ui:
+                users.append(ui)
+        # Fallback: 综合搜索结果中的用户
+        if not users:
+            for item in data_list:
+                for u in item.get("user_list", []):
+                    ui = u.get("user_info", {})
+                    if ui:
+                        users.append(ui)
 
         if output:
             export_data(users, output)

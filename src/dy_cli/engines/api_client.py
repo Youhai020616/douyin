@@ -38,6 +38,7 @@ VIDEO_COMMENTS_URL = f"{API_DOMAIN}/aweme/v1/web/comment/list/"
 USER_PROFILE_URL = f"{API_DOMAIN}/aweme/v1/web/user/profile/other/"
 USER_POSTS_URL = f"{API_DOMAIN}/aweme/v1/web/aweme/post/"
 TRENDING_URL = f"{API_DOMAIN}/aweme/v1/web/hot/search/list/"
+USER_SEARCH_URL = f"{API_DOMAIN}/aweme/v1/web/discover/search/"
 LIVE_INFO_URL = "https://live.douyin.com/webcast/room/web/enter/"
 FEED_URL = f"{API_DOMAIN}/aweme/v1/web/tab/feed/"
 SUGGEST_URL = f"{API_DOMAIN}/aweme/v1/web/api/suggest_words/"
@@ -332,6 +333,10 @@ class DouyinAPIClient:
             offset: 偏移量
             count: 每页数量
         """
+        # 用户搜索使用专用 endpoint
+        if search_type == "user":
+            return self.search_users(keyword, offset=offset, count=count)
+
         params = {
             **get_base_params(),
             "keyword": keyword,
@@ -350,6 +355,31 @@ class DouyinAPIClient:
         if data.get("status_code") != 0:
             raise DouyinAPIError(
                 f"搜索失败: {data.get('status_msg', 'unknown error')}"
+            )
+
+        return data
+
+    def search_users(
+        self,
+        keyword: str,
+        offset: int = 0,
+        count: int = 10,
+    ) -> dict:
+        """搜索用户（使用专用 endpoint）。"""
+        params = {
+            **get_base_params(),
+            "keyword": keyword,
+            "search_channel": "aweme_user_search",
+            "offset": str(offset),
+            "count": str(count),
+            "search_source": "normal_search",
+            "is_filter_search": "0",
+        }
+        data = self._get(USER_SEARCH_URL, params=params)
+
+        if data.get("status_code") != 0:
+            raise DouyinAPIError(
+                f"用户搜索失败: {data.get('status_msg', 'unknown error')}"
             )
 
         return data
