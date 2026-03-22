@@ -161,3 +161,13 @@ macOS ✅ &nbsp; Linux ✅ &nbsp; Windows ✅
 ## License
 
 [MIT](./LICENSE)
+
+## 🔗 Ecosystem
+
+| Project | Description |
+|---------|-------------|
+| [AgentMind](https://github.com/Youhai020616/Agentmind) | Self-learning memory system for AI agents |
+| [stealth-cli](https://github.com/Youhai020616/stealth-cli) | Anti-detection browser CLI powered by Camoufox |
+| [stealth-x](https://github.com/Youhai020616/stealth-x) | Stealth X/Twitter automation |
+| [xiaohongshu](https://github.com/Youhai020616/xiaohongshu) | Xiaohongshu automation |
+| [freepost](https://github.com/Youhai020616/freepost-saas) | AI social media management |
