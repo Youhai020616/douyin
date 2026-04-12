@@ -13,6 +13,7 @@ import os
 import random
 import re
 import time
+from collections.abc import Callable
 from typing import Any
 
 import httpx
@@ -83,9 +84,9 @@ class DouyinAPIClient:
         proxy: str = "",
         timeout: int = REQUEST_TIMEOUT,
     ):
-        self.cookie = cookie
-        self.proxy = proxy
-        self.timeout = timeout
+        self.cookie: str = cookie
+        self.proxy: str = proxy
+        self.timeout: int = timeout
         self._client: httpx.Client | None = None
         self._last_request_time: float = 0.0
         self._request_delay: float = 1.0
@@ -100,7 +101,7 @@ class DouyinAPIClient:
     @property
     def client(self) -> httpx.Client:
         if self._client is None:
-            transport_kwargs = {}
+            transport_kwargs: dict[str, Any] = {}
             if self.proxy:
                 transport_kwargs["proxy"] = self.proxy
             self._client = httpx.Client(
@@ -111,10 +112,12 @@ class DouyinAPIClient:
             self._init_cookies()
         return self._client
 
-    def _init_cookies(self):
+    def _init_cookies(self) -> None:
         """获取 ttwid 等必要 cookie。"""
+        if self._client is None:
+            return
         try:
-            self._client.post(
+            _ = self._client.post(
                 TTWID_URL,
                 json={
                     "region": "cn",
@@ -148,18 +151,19 @@ class DouyinAPIClient:
             logger.debug("Rate-limit delay: %.2fs", sleep_time)
             time.sleep(sleep_time)
 
-    def _handle_verify(self, resp: httpx.Response) -> None:
+    def _handle_verify(self, _resp: httpx.Response) -> None:
         """验证码冷却：渐进式退避。"""
         self._verify_count += 1
-        cooldown = min(30, 5 * (2 ** (self._verify_count - 1)))
+        cooldown: float = min(30.0, 5.0 * (2 ** (self._verify_count - 1)))
         logger.warning("Verify triggered (count=%d), cooldown %.0fs", self._verify_count, cooldown)
         self._request_delay = max(self._request_delay, self._base_delay * 2)
         time.sleep(cooldown)
 
-    def _request_with_retry(self, method: str, url: str, **kwargs) -> httpx.Response:
+    def _request_with_retry(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
         """带重试和退避的请求。"""
         self._rate_limit_delay()
         last_exc: Exception | None = None
+        last_resp: httpx.Response | None = None
 
         for attempt in range(self._max_retries):
             try:
@@ -168,7 +172,8 @@ class DouyinAPIClient:
 
                 # 重试: 429 / 5xx
                 if resp.status_code in (429, 500, 502, 503, 504):
-                    wait = (2**attempt) + random.uniform(0, 1)
+                    last_resp = resp
+                    wait: float = float(2**attempt) + random.uniform(0, 1)
                     logger.warning(
                         "HTTP %d, retry in %.1fs (%d/%d)", resp.status_code, wait, attempt + 1, self._max_retries
                     )
@@ -180,19 +185,19 @@ class DouyinAPIClient:
 
             except (httpx.TimeoutException, httpx.NetworkError) as exc:
                 last_exc = exc
-                wait = (2**attempt) + random.uniform(0, 1)
+                wait: float = float(2**attempt) + random.uniform(0, 1)
                 logger.warning("Network error: %s, retry in %.1fs (%d/%d)", exc, wait, attempt + 1, self._max_retries)
                 time.sleep(wait)
 
         if last_exc:
             raise DouyinAPIError(f"请求失败 ({self._max_retries} 次重试后): {last_exc}") from last_exc
-        raise DouyinAPIError(f"请求失败: HTTP {resp.status_code}")
+        raise DouyinAPIError(f"请求失败: HTTP {last_resp.status_code if last_resp else 'unknown'}")
 
     # ------------------------------------------------------------------
     # HTTP methods
     # ------------------------------------------------------------------
 
-    def _get(self, url: str, params: dict | None = None, **kwargs) -> dict:
+    def _get(self, url: str, params: dict[str, str] | None = None, **kwargs: Any) -> dict[str, Any]:
         """GET 请求，带签名、重试和反爬。"""
         headers = get_headers(cookie=self.cookie)
 
@@ -206,7 +211,7 @@ class DouyinAPIClient:
             resp = self._request_with_retry("GET", url, headers=headers, **kwargs)
 
         try:
-            resp.raise_for_status()
+            _ = resp.raise_for_status()
         except httpx.HTTPStatusError as e:
             raise DouyinAPIError(f"HTTP {e.response.status_code}: {url}") from e
 
@@ -214,35 +219,36 @@ class DouyinAPIClient:
             raise DouyinAPIError(f"空响应 (可能需要登录或签名): {url.split('/')[-2]}")
 
         try:
-            data = resp.json()
+            data: dict[str, Any] = resp.json()  # type: ignore[assignment]
         except json.JSONDecodeError as e:
             raise DouyinAPIError(f"JSON 解析失败: {e}") from e
 
         # 检测 verify_check — 只记录，不重试（避免死循环）
-        nil_info = data.get("search_nil_info", {})
+        nil_info: dict[str, Any] = data.get("search_nil_info", {})  # type: ignore[assignment]
         if nil_info.get("search_nil_type") == "verify_check":
             self._verify_count += 1
             logger.warning("verify_check detected (count=%d)", self._verify_count)
 
         return data
 
-    def _post(self, url: str, data: dict | None = None, **kwargs) -> dict:
+    def _post(self, url: str, data: dict[str, Any] | None = None, **kwargs: Any) -> dict[str, Any]:
         """POST 请求，带重试和反爬。"""
         headers = get_headers(cookie=self.cookie)
         headers["Content-Type"] = "application/x-www-form-urlencoded"
         resp = self._request_with_retry("POST", url, data=data, headers=headers, **kwargs)
 
         try:
-            resp.raise_for_status()
+            _ = resp.raise_for_status()
         except httpx.HTTPStatusError as e:
             raise DouyinAPIError(f"HTTP {e.response.status_code}: {url}") from e
 
         try:
-            return resp.json()
+            result: dict[str, Any] = resp.json()  # type: ignore[assignment]
+            return result
         except json.JSONDecodeError as e:
             raise DouyinAPIError(f"JSON 解析失败: {e}") from e
 
-    def close(self):
+    def close(self) -> None:
         if self._client:
             self._client.close()
             self._client = None
@@ -263,16 +269,16 @@ class DouyinAPIClient:
                     cookie_data = json.load(f)
                 # Support playwright storage_state format
                 if isinstance(cookie_data, dict) and "cookies" in cookie_data:
-                    cookies = cookie_data["cookies"]
+                    cookies: list[dict[str, str]] = cookie_data["cookies"]
                     cookie = "; ".join(f"{c['name']}={c['value']}" for c in cookies if "douyin" in c.get("domain", ""))
                 elif isinstance(cookie_data, str):
                     cookie = cookie_data
             except Exception:
                 pass
 
-        proxy = cfg["api"].get("proxy", "")
-        timeout = cfg["api"].get("timeout", REQUEST_TIMEOUT)
-        return cls(cookie=cookie, proxy=proxy, timeout=timeout)
+        proxy: str = cfg["api"].get("proxy", "")
+        timeout: int = cfg["api"].get("timeout", REQUEST_TIMEOUT)
+        return cls(cookie=cookie, proxy=proxy, timeout=int(timeout))
 
     # ------------------------------------------------------------------
     # URL parsing
@@ -293,7 +299,7 @@ class DouyinAPIClient:
                 resp = no_follow.get(url, headers=get_headers())
                 no_follow.close()
 
-                location = resp.headers.get("location", "")
+                location = str(resp.headers.get("location", ""))
                 match = SHARE_URL_PATTERN.search(location)
                 if match:
                     return match.group(1)
@@ -334,7 +340,7 @@ class DouyinAPIClient:
         search_type: str = "general",
         offset: int = 0,
         count: int = 20,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """
         搜索抖音内容。
 
@@ -383,7 +389,7 @@ class DouyinAPIClient:
         keyword: str,
         offset: int = 0,
         count: int = 10,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """搜索用户（使用专用 endpoint）。"""
         params = {
             **get_base_params(),
@@ -405,7 +411,7 @@ class DouyinAPIClient:
     # Video detail
     # ------------------------------------------------------------------
 
-    def get_video_detail(self, aweme_id: str) -> dict:
+    def get_video_detail(self, aweme_id: str) -> dict[str, Any]:
         """获取视频详情（自动 fallback 到 share API）。"""
         # Primary: Web API
         try:
@@ -424,7 +430,7 @@ class DouyinAPIClient:
         # Fallback: iesdouyin share API (更稳定，无签名要求)
         return self._get_detail_via_share(aweme_id)
 
-    def _get_detail_via_share(self, aweme_id: str) -> dict:
+    def _get_detail_via_share(self, aweme_id: str) -> dict[str, Any]:
         """通过 iesdouyin share 页面 SSR 数据获取详情。"""
         headers = get_headers()
         headers["User-Agent"] = (
@@ -436,7 +442,7 @@ class DouyinAPIClient:
                 f"https://www.iesdouyin.com/share/video/{aweme_id}/",
                 headers=headers,
             )
-            resp.raise_for_status()
+            _ = resp.raise_for_status()
             text = resp.text
 
             # Extract _ROUTER_DATA from SSR page
@@ -460,17 +466,17 @@ class DouyinAPIClient:
                         break
 
             raw = text[start:end].replace("\\u002F", "/")
-            data = json.loads(raw)
-            loader = data.get("loaderData", {})
+            data: dict[str, Any] = json.loads(raw)  # type: ignore[assignment]
+            loader: dict[str, Any] = data.get("loaderData", {})  # type: ignore[assignment]
 
             # Find the video page data
-            for key, val in loader.items():
+            for _key, val in loader.items():
                 if isinstance(val, dict):
-                    video_res = val.get("videoInfoRes", {})
+                    video_res: dict[str, Any] = val.get("videoInfoRes", {})
                     if isinstance(video_res, dict):
-                        items = video_res.get("item_list", [])
+                        items: list[Any] = video_res.get("item_list", [])
                         if items:
-                            return items[0]
+                            return items[0]  # type: ignore[no-any-return]
 
             # item_list empty = overseas IP blocked
             raise DouyinAPIError(
@@ -492,7 +498,7 @@ class DouyinAPIClient:
         aweme_id: str,
         cursor: int = 0,
         count: int = 20,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """获取视频评论列表。"""
         params = {
             **get_base_params(),
@@ -512,7 +518,7 @@ class DouyinAPIClient:
     # User
     # ------------------------------------------------------------------
 
-    def get_user_profile(self, sec_user_id: str) -> dict:
+    def get_user_profile(self, sec_user_id: str) -> dict[str, Any]:
         """获取用户资料。"""
         params = {
             **get_base_params(),
@@ -530,7 +536,7 @@ class DouyinAPIClient:
         sec_user_id: str,
         max_cursor: int = 0,
         count: int = 20,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """获取用户作品列表。"""
         params = {
             **get_base_params(),
@@ -549,7 +555,7 @@ class DouyinAPIClient:
     # Trending
     # ------------------------------------------------------------------
 
-    def get_trending(self) -> list[dict]:
+    def get_trending(self) -> list[dict[str, Any]]:
         """获取抖音热榜。"""
         params = get_base_params()
         data = self._get(TRENDING_URL, params=params)
@@ -622,7 +628,7 @@ class DouyinAPIClient:
         self,
         url: str,
         output_path: str,
-        progress_callback: Any = None,
+        progress_callback: Callable[[int, int], None] | None = None,
     ) -> str:
         """
         下载文件到本地。
@@ -638,14 +644,14 @@ class DouyinAPIClient:
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
         headers = get_headers()
 
-        with self.client.stream("GET", url, headers=headers) as resp:
-            resp.raise_for_status()
-            total = int(resp.headers.get("Content-Length", 0))
+        with self.client.stream("GET", url, headers=headers) as stream_resp:
+            stream_resp.raise_for_status()
+            total = int(stream_resp.headers.get("Content-Length", 0))
             downloaded = 0
 
             with open(output_path, "wb") as f:
-                for chunk in resp.iter_bytes(chunk_size=8192):
-                    f.write(chunk)
+                for chunk in stream_resp.iter_bytes(chunk_size=8192):
+                    _ = f.write(chunk)
                     downloaded += len(chunk)
                     if progress_callback:
                         progress_callback(downloaded, total)
@@ -656,7 +662,7 @@ class DouyinAPIClient:
     # Live
     # ------------------------------------------------------------------
 
-    def get_live_info(self, web_rid: str) -> dict:
+    def get_live_info(self, web_rid: str) -> dict[str, Any]:
         """
         获取直播间信息。
 
@@ -689,7 +695,7 @@ class DouyinAPIClient:
     # Feed
     # ------------------------------------------------------------------
 
-    def get_feed(self, count: int = 10) -> list[dict]:
+    def get_feed(self, count: int = 10) -> list[dict[str, Any]]:
         """获取推荐 Feed。"""
         params = {
             **get_base_params(),
