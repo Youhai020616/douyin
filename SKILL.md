@@ -65,6 +65,7 @@ douyin/
 dy search "AI创业"
 dy search "咖啡" --sort 最多点赞 --time 一天内
 dy search "科技" --type video --count 50 --json-output
+dy search "风景" --type atlas                          # 图文搜索
 ```
 
 参数:

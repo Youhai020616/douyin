@@ -4,6 +4,7 @@ Douyin API Client — 逆向 API 采集客户端。
 通过 httpx 调用抖音 Web 端接口，实现搜索、下载、评论、热榜等功能。
 参考: JoeanAmier/TikTokDownloader, Evil0ctal/Douyin_TikTok_Download_API
 """
+
 from __future__ import annotations
 
 import json
@@ -20,8 +21,10 @@ logger = logging.getLogger(__name__)
 
 from dy_cli.utils import config
 from dy_cli.utils.signature import (
+    build_request_url,
     get_base_params,
     get_headers,
+    sign_url,
 )
 
 # ------------------------------------------------------------------
@@ -50,12 +53,17 @@ IESDOUYIN_DETAIL_URL = "https://www.iesdouyin.com/web/api/v2/aweme/iteminfo/"
 TTWID_URL = "https://ttwid.bytedance.com/ttwid/union/register/"
 
 # Share URL pattern
-SHARE_URL_PATTERN = re.compile(
-    r"https?://(?:www\.)?(?:douyin\.com|iesdouyin\.com)/(?:video|note|share/video)/(\d+)"
-)
+SHARE_URL_PATTERN = re.compile(r"https?://(?:www\.)?(?:douyin\.com|iesdouyin\.com)/(?:video|note|share/video)/(\d+)")
 SHORT_URL_PATTERN = re.compile(r"https?://v\.douyin\.com/\w+/?")
 
 REQUEST_TIMEOUT = 30
+
+# 搜索通道映射: CLI search_type → 抖音 API search_channel
+SEARCH_CHANNEL_MAP = {
+    "general": "aweme_general",
+    "video": "aweme_video_web",
+    "atlas": "aweme_atlas",
+}
 
 
 class DouyinAPIError(Exception):
@@ -160,8 +168,10 @@ class DouyinAPIClient:
 
                 # 重试: 429 / 5xx
                 if resp.status_code in (429, 500, 502, 503, 504):
-                    wait = (2 ** attempt) + random.uniform(0, 1)
-                    logger.warning("HTTP %d, retry in %.1fs (%d/%d)", resp.status_code, wait, attempt + 1, self._max_retries)
+                    wait = (2**attempt) + random.uniform(0, 1)
+                    logger.warning(
+                        "HTTP %d, retry in %.1fs (%d/%d)", resp.status_code, wait, attempt + 1, self._max_retries
+                    )
                     time.sleep(wait)
                     continue
 
@@ -170,7 +180,7 @@ class DouyinAPIClient:
 
             except (httpx.TimeoutException, httpx.NetworkError) as exc:
                 last_exc = exc
-                wait = (2 ** attempt) + random.uniform(0, 1)
+                wait = (2**attempt) + random.uniform(0, 1)
                 logger.warning("Network error: %s, retry in %.1fs (%d/%d)", exc, wait, attempt + 1, self._max_retries)
                 time.sleep(wait)
 
@@ -183,9 +193,17 @@ class DouyinAPIClient:
     # ------------------------------------------------------------------
 
     def _get(self, url: str, params: dict | None = None, **kwargs) -> dict:
-        """GET 请求，带重试和反爬。"""
+        """GET 请求，带签名、重试和反爬。"""
         headers = get_headers(cookie=self.cookie)
-        resp = self._request_with_retry("GET", url, params=params, headers=headers, **kwargs)
+
+        # 构建完整 URL 并签名（添加 X-Bogus / a-bogus 参数）
+        if params:
+            full_url = build_request_url(url, params)
+            signed_url = sign_url(full_url)
+            # 签名后参数已包含在 URL 中，不再单独传 params
+            resp = self._request_with_retry("GET", signed_url, headers=headers, **kwargs)
+        else:
+            resp = self._request_with_retry("GET", url, headers=headers, **kwargs)
 
         try:
             resp.raise_for_status()
@@ -246,11 +264,7 @@ class DouyinAPIClient:
                 # Support playwright storage_state format
                 if isinstance(cookie_data, dict) and "cookies" in cookie_data:
                     cookies = cookie_data["cookies"]
-                    cookie = "; ".join(
-                        f"{c['name']}={c['value']}"
-                        for c in cookies
-                        if "douyin" in c.get("domain", "")
-                    )
+                    cookie = "; ".join(f"{c['name']}={c['value']}" for c in cookies if "douyin" in c.get("domain", ""))
                 elif isinstance(cookie_data, str):
                     cookie = cookie_data
             except Exception:
@@ -293,7 +307,7 @@ class DouyinAPIClient:
 
                 # Step 3: Search in response body for video ID pattern
                 body = resp2.text[:50000]
-                match = re.search(r'(?:video|aweme)[/_]?(?:id)?[=:/](\d{15,})', body)
+                match = re.search(r"(?:video|aweme)[/_]?(?:id)?[=:/](\d{15,})", body)
                 if match:
                     return match.group(1)
 
@@ -301,7 +315,7 @@ class DouyinAPIClient:
                 pass
 
         # Try extracting numbers that look like aweme_id from the URL itself
-        match = re.search(r'/(\d{15,})', url)
+        match = re.search(r"/(\d{15,})", url)
         if match:
             return match.group(1)
 
@@ -329,7 +343,7 @@ class DouyinAPIClient:
             sort_type: 0=综合, 1=最多点赞, 2=最新发布
             publish_time: 0=不限, 1=一天内, 7=一周内, 182=半年内
             filter_duration: 0=不限, 1=1分钟内, 2=1-5分钟, 3=5分钟以上
-            search_type: general(综合), video, user
+            search_type: general(综合), video(视频), atlas(图文), user(用户)
             offset: 偏移量
             count: 每页数量
         """
@@ -337,10 +351,17 @@ class DouyinAPIClient:
         if search_type == "user":
             return self.search_users(keyword, offset=offset, count=count)
 
+        # 映射 search_channel
+        search_channel = SEARCH_CHANNEL_MAP.get(search_type, "aweme_general")
+
+        # 当使用了筛选条件时，is_filter_search 须为 "1"，否则服务端忽略筛选参数
+        has_filter = sort_type != 0 or publish_time != 0 or filter_duration != 0
+        is_filter_search = "1" if has_filter else "0"
+
         params = {
             **get_base_params(),
             "keyword": keyword,
-            "search_channel": search_type,
+            "search_channel": search_channel,
             "sort_type": str(sort_type),
             "publish_time": str(publish_time),
             "filter_duration": str(filter_duration),
@@ -348,14 +369,12 @@ class DouyinAPIClient:
             "count": str(count),
             "search_source": "normal_search",
             "query_correct_type": "1",
-            "is_filter_search": "0",
+            "is_filter_search": is_filter_search,
         }
         data = self._get(SEARCH_URL, params=params)
 
         if data.get("status_code") != 0:
-            raise DouyinAPIError(
-                f"搜索失败: {data.get('status_msg', 'unknown error')}"
-            )
+            raise DouyinAPIError(f"搜索失败: {data.get('status_msg', 'unknown error')}")
 
         return data
 
@@ -378,9 +397,7 @@ class DouyinAPIClient:
         data = self._get(USER_SEARCH_URL, params=params)
 
         if data.get("status_code") != 0:
-            raise DouyinAPIError(
-                f"用户搜索失败: {data.get('status_msg', 'unknown error')}"
-            )
+            raise DouyinAPIError(f"用户搜索失败: {data.get('status_msg', 'unknown error')}")
 
         return data
 
@@ -433,7 +450,7 @@ class DouyinAPIClient:
 
             depth = 0
             end = start
-            for i, c in enumerate(text[start:start + 50000]):
+            for i, c in enumerate(text[start : start + 50000]):
                 if c == "{":
                     depth += 1
                 elif c == "}":
@@ -487,9 +504,7 @@ class DouyinAPIClient:
         data = self._get(VIDEO_COMMENTS_URL, params=params)
 
         if data.get("status_code") != 0:
-            raise DouyinAPIError(
-                f"获取评论失败: {data.get('status_msg', 'unknown error')}"
-            )
+            raise DouyinAPIError(f"获取评论失败: {data.get('status_msg', 'unknown error')}")
 
         return data
 
@@ -506,9 +521,7 @@ class DouyinAPIClient:
         data = self._get(USER_PROFILE_URL, params=params)
 
         if data.get("status_code") != 0:
-            raise DouyinAPIError(
-                f"获取用户资料失败: {data.get('status_msg', 'unknown error')}"
-            )
+            raise DouyinAPIError(f"获取用户资料失败: {data.get('status_msg', 'unknown error')}")
 
         return data.get("user", data)
 
@@ -528,9 +541,7 @@ class DouyinAPIClient:
         data = self._get(USER_POSTS_URL, params=params)
 
         if data.get("status_code") != 0:
-            raise DouyinAPIError(
-                f"获取用户作品失败: {data.get('status_msg', 'unknown error')}"
-            )
+            raise DouyinAPIError(f"获取用户作品失败: {data.get('status_msg', 'unknown error')}")
 
         return data
 
@@ -544,9 +555,7 @@ class DouyinAPIClient:
         data = self._get(TRENDING_URL, params=params)
 
         if data.get("status_code") != 0:
-            raise DouyinAPIError(
-                f"获取热榜失败: {data.get('status_msg', 'unknown error')}"
-            )
+            raise DouyinAPIError(f"获取热榜失败: {data.get('status_msg', 'unknown error')}")
 
         word_list = data.get("data", {}).get("word_list", [])
         return word_list
@@ -668,9 +677,7 @@ class DouyinAPIClient:
         data = self._get(LIVE_INFO_URL, params=params)
 
         if data.get("status_code") != 0:
-            raise DouyinAPIError(
-                f"获取直播信息失败: {data.get('status_msg', 'unknown error')}"
-            )
+            raise DouyinAPIError(f"获取直播信息失败: {data.get('status_msg', 'unknown error')}")
 
         room_data = data.get("data", {})
         rooms = room_data.get("data", []) if isinstance(room_data.get("data"), list) else []

@@ -71,6 +71,7 @@ dy search "AI创业"                        # 综合搜索
 dy search "咖啡" --sort 最多点赞          # 按点赞排序
 dy search "春招" --time 一天内            # 限制时间
 dy search "科技" --type video             # 仅视频
+dy search "风景" --type atlas             # 仅图文
 dy search "科技" --count 50              # 返回 50 条
 dy search "科技" --json-output           # JSON 输出
 ```

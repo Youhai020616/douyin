@@ -1,6 +1,7 @@
 """
 dy search / detail — 搜索和详情命令。
 """
+
 from __future__ import annotations
 
 import click
@@ -34,12 +35,17 @@ TIME_MAP = {
 
 @click.command("search", help="搜索抖音视频")
 @click.argument("keyword")
-@click.option("--sort", type=click.Choice(["综合", "最多点赞", "最新发布"]),
-              default="综合", help="排序方式")
-@click.option("--time", "pub_time", type=click.Choice(["不限", "一天内", "一周内", "半年内"]),
-              default="不限", help="发布时间")
-@click.option("--type", "search_type", type=click.Choice(["general", "video", "user"]),
-              default="general", help="搜索类型")
+@click.option("--sort", type=click.Choice(["综合", "最多点赞", "最新发布"]), default="综合", help="排序方式")
+@click.option(
+    "--time", "pub_time", type=click.Choice(["不限", "一天内", "一周内", "半年内"]), default="不限", help="发布时间"
+)
+@click.option(
+    "--type",
+    "search_type",
+    type=click.Choice(["general", "video", "atlas", "user"]),
+    default="general",
+    help="搜索类型: general(综合)/video(视频)/atlas(图文)/user(用户)",
+)
 @click.option("--count", type=int, default=20, help="结果数量 (默认 20)")
 @click.option("--account", default=None, help="使用指定账号")
 @click.option("--json-output", "as_json", is_flag=True, help="输出 JSON 格式")
@@ -47,7 +53,8 @@ TIME_MAP = {
 def search(keyword, sort, pub_time, search_type, count, account, as_json, output):
     """搜索抖音视频/用户。"""
     client = DouyinAPIClient.from_config(account)
-    info(f"正在搜索: {keyword}")
+    type_label = {"general": "综合", "video": "视频", "atlas": "图文", "user": "用户"}.get(search_type, "综合")
+    info(f"正在搜索 [{type_label}]: {keyword}")
 
     try:
         result = client.search(

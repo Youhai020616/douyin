@@ -72,6 +72,7 @@ dy publish -t "标题" -c "描述" -v video.mp4   # Publish video
 ```bash
 dy search "关键词"                        # Search videos
 dy search "咖啡" --sort 最多点赞          # Sort by likes
+dy search "风景" --type atlas             # Search photo posts
 dy search "日食记" --type user            # Search users
 dy search "AI" -o results.csv            # Export to CSV
 dy read 1                                # Read 1st result (short index)
