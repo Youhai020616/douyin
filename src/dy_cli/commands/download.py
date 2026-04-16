@@ -10,6 +10,7 @@ import click
 from rich.progress import BarColumn, DownloadColumn, Progress, SpinnerColumn, TextColumn, TransferSpeedColumn
 
 from dy_cli.engines.api_client import DouyinAPIClient, DouyinAPIError
+from dy_cli.engines.playwright_client import PlaywrightClient, PlaywrightError
 from dy_cli.utils import config
 from dy_cli.utils.index_cache import resolve_id
 from dy_cli.utils.output import console, error, info, success, warning
@@ -64,6 +65,17 @@ def download(url_or_id, output_dir, music, limit, user, account, as_json):
         # Get download info
         info("正在获取下载链接...")
         dl_info = client.get_download_url(aweme_id)
+
+        # 优先使用真实浏览器播放器拿到的 currentSrc。
+        try:
+            browser_account = account or cfg["default"].get("account", "default")
+            browser_client = PlaywrightClient(account=browser_account, headless=True)
+            browser_video_url = browser_client.get_video_current_src(aweme_id)
+            if browser_video_url.startswith("http"):
+                dl_info["video_url"] = browser_video_url
+                info(f"浏览器播放器地址: {browser_video_url.split('/')[2]}")
+        except PlaywrightError as e:
+            warning(f"未能读取浏览器播放器地址，回退 API 链路: {e}")
 
         if as_json:
             from dy_cli.utils.output import print_json

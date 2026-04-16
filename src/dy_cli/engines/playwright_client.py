@@ -698,6 +698,48 @@ class PlaywrightClient:
             raise PlaywrightError("未登录")
         return _run_async(self._get_comments_async(aweme_id, count))
 
+    def get_video_current_src(self, aweme_id: str) -> str:
+        """从视频页面读取播放器当前真实媒体地址。"""
+        if not self.cookie_exists():
+            raise PlaywrightError("未登录")
+        return _run_async(self._get_video_current_src_async(aweme_id))
+
+    async def _get_video_current_src_async(self, aweme_id: str) -> str:
+        from playwright.async_api import async_playwright
+
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(headless=self.headless)
+            context = await browser.new_context(
+                storage_state=self.cookie_file,
+                viewport={"width": 1440, "height": 900},
+            )
+            page = await context.new_page()
+
+            try:
+                await page.goto(
+                    f"https://www.douyin.com/video/{aweme_id}",
+                    wait_until="domcontentloaded",
+                )
+                await page.wait_for_selector("video", timeout=30000)
+                await page.wait_for_function(
+                    """() => {
+                        const v = document.querySelector('video');
+                        return !!(v && v.currentSrc && v.readyState >= 2);
+                    }""",
+                    timeout=30000,
+                )
+                current_src = await page.evaluate(
+                    """() => {
+                        const v = document.querySelector('video');
+                        return v ? (v.currentSrc || '') : '';
+                    }"""
+                )
+                if not current_src:
+                    raise PlaywrightError("未能从播放器读取 currentSrc")
+                return str(current_src)
+            finally:
+                await browser.close()
+
     async def _get_comments_async(self, aweme_id: str, count: int) -> list[dict]:
         from playwright.async_api import async_playwright
         async with async_playwright() as pw:
