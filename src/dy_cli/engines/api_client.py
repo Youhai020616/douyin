@@ -14,6 +14,7 @@ import random
 import re
 import time
 from collections.abc import Callable
+from http.cookiejar import Cookie, CookieJar
 from typing import Any
 
 import httpx
@@ -83,8 +84,11 @@ class DouyinAPIClient:
         cookie: str = "",
         proxy: str = "",
         timeout: int = REQUEST_TIMEOUT,
+        account: str = "default",
+        cookie_jar: CookieJar | httpx.Cookies | None = None,
     ):
-        self.cookie: str = cookie
+        self.account = account
+        self.cookie_file = config.get_cookie_file(account)
         self.proxy: str = proxy
         self.timeout: int = timeout
         self._client: httpx.Client | None = None
@@ -93,6 +97,148 @@ class DouyinAPIClient:
         self._base_delay: float = 1.0
         self._verify_count: int = 0
         self._max_retries: int = 3
+
+        self._cookie_jar = CookieJar()
+
+        if cookie_jar is not None:
+            self._merge_cookie_jar(cookie_jar)
+        elif cookie:
+            self._load_cookie_string(cookie)
+        else:
+            self._load_cookie_from_file()
+
+        if cookie_jar is not None and cookie:
+            self._load_cookie_string(cookie)
+
+    def _build_cookie(
+        self,
+        name: str,
+        value: str,
+        domain: str = ".douyin.com",
+        path: str = "/",
+        secure: bool = False,
+        expires: int | None = None,
+        rest: dict[str, Any] | None = None,
+    ) -> Cookie:
+        return Cookie(
+            version=0,
+            name=name,
+            value=value,
+            port=None,
+            port_specified=False,
+            domain=domain,
+            domain_specified=bool(domain),
+            domain_initial_dot=domain.startswith("."),
+            path=path,
+            path_specified=True,
+            secure=secure,
+            expires=expires,
+            discard=expires is None,
+            comment=None,
+            comment_url=None,
+            rest=rest or {},
+            rfc2109=False,
+        )
+
+    def _set_cookie_from_dict(self, cookie_dict: dict[str, Any]) -> None:
+        name = cookie_dict.get("name")
+        value = cookie_dict.get("value")
+        if not name or value is None:
+            return
+
+        self._cookie_jar.set_cookie(
+            self._build_cookie(
+                name=name,
+                value=str(value),
+                domain=cookie_dict.get("domain", ".douyin.com"),
+                path=cookie_dict.get("path", "/"),
+                secure=bool(cookie_dict.get("secure", False)),
+                expires=cookie_dict.get("expires"),
+                rest={k: v for k, v in cookie_dict.items() if k in {"HttpOnly", "SameSite"}},
+            )
+        )
+
+    def _merge_cookie_jar(self, cookie_jar: CookieJar | httpx.Cookies) -> None:
+        source = cookie_jar.jar if isinstance(cookie_jar, httpx.Cookies) else cookie_jar
+        for cookie in source:
+            self._cookie_jar.set_cookie(cookie)
+
+    def _load_cookie_from_file(self) -> None:
+        """从账号对应的 JSON 文件加载 cookie 到 CookieJar。"""
+        if not os.path.exists(self.cookie_file):
+            return
+
+        try:
+            with open(self.cookie_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            cookies: list[dict[str, Any]] = []
+            if isinstance(data, list):
+                cookies = data
+            elif isinstance(data, dict):
+                cookies = data.get("cookies", [])
+            elif isinstance(data, str):
+                self._load_cookie_string(data)
+                return
+
+            for cookie_dict in cookies:
+                self._set_cookie_from_dict(cookie_dict)
+
+            logger.info("已加载 %d 个 cookie 到 CookieJar", len(cookies))
+        except Exception as e:
+            logger.warning("加载 cookie 文件失败: %s", e)
+
+    def _load_cookie_string(self, cookie_str: str) -> None:
+        """从 cookie 字符串或 JSON 字符串加载到 CookieJar。"""
+        if cookie_str.startswith("{"):
+            try:
+                cookie_data = json.loads(cookie_str)
+                if isinstance(cookie_data, list):
+                    cookies = cookie_data
+                elif isinstance(cookie_data, dict) and "cookies" in cookie_data:
+                    cookies = cookie_data["cookies"]
+                else:
+                    return
+
+                for cookie_dict in cookies:
+                    self._set_cookie_from_dict(cookie_dict)
+                logger.info("已从字符串加载 %d 个 cookie 到 CookieJar", len(cookies))
+            except Exception as e:
+                logger.warning("解析 cookie 字符串失败: %s", e)
+        else:
+            for item in cookie_str.split(";"):
+                item = item.strip()
+                if "=" in item:
+                    name, value = item.split("=", 1)
+                    self._cookie_jar.set_cookie(
+                        self._build_cookie(
+                            name=name.strip(),
+                            value=value.strip(),
+                        )
+                    )
+
+    def _save_cookies(self) -> None:
+        """保存 CookieJar 中的 cookie 到账号对应文件。"""
+        os.makedirs(os.path.dirname(self.cookie_file), exist_ok=True)
+
+        cookies = []
+        for cookie in self._cookie_jar:
+            cookies.append(
+                {
+                    "name": cookie.name,
+                    "value": cookie.value,
+                    "domain": cookie.domain,
+                    "path": cookie.path,
+                    "secure": cookie.secure,
+                }
+            )
+
+        with open(self.cookie_file, "w", encoding="utf-8") as f:
+            json.dump({"cookies": cookies, "origins": []}, f, indent=2)
+
+    def _get_cookie_string(self) -> str:
+        """从 CookieJar 生成请求头使用的 cookie 字符串。"""
+        return "; ".join(f"{cookie.name}={cookie.value}" for cookie in self._cookie_jar)
 
     # ------------------------------------------------------------------
     # HTTP client
@@ -107,6 +253,7 @@ class DouyinAPIClient:
             self._client = httpx.Client(
                 timeout=self.timeout,
                 follow_redirects=True,
+                cookies=self._cookie_jar,
                 **transport_kwargs,
             )
             self._init_cookies()
@@ -181,6 +328,7 @@ class DouyinAPIClient:
                     continue
 
                 self._verify_count = 0
+                self._save_cookies()
                 return resp
 
             except (httpx.TimeoutException, httpx.NetworkError) as exc:
@@ -199,7 +347,7 @@ class DouyinAPIClient:
 
     def _get(self, url: str, params: dict[str, str] | None = None, **kwargs: Any) -> dict[str, Any]:
         """GET 请求，带签名、重试和反爬。"""
-        headers = get_headers(cookie=self.cookie)
+        headers = get_headers(cookie=self._get_cookie_string())
 
         # 构建完整 URL 并签名（添加 X-Bogus / a-bogus 参数）
         if params:
@@ -233,7 +381,7 @@ class DouyinAPIClient:
 
     def _post(self, url: str, data: dict[str, Any] | None = None, **kwargs: Any) -> dict[str, Any]:
         """POST 请求，带重试和反爬。"""
-        headers = get_headers(cookie=self.cookie)
+        headers = get_headers(cookie=self._get_cookie_string())
         headers["Content-Type"] = "application/x-www-form-urlencoded"
         resp = self._request_with_retry("POST", url, data=data, headers=headers, **kwargs)
 
@@ -261,24 +409,10 @@ class DouyinAPIClient:
     def from_config(cls, account: str | None = None) -> DouyinAPIClient:
         """从配置文件创建客户端。"""
         cfg = config.load_config()
-        cookie_file = config.get_cookie_file(account)
-        cookie = ""
-        if os.path.exists(cookie_file):
-            try:
-                with open(cookie_file, encoding="utf-8") as f:
-                    cookie_data = json.load(f)
-                # Support playwright storage_state format
-                if isinstance(cookie_data, dict) and "cookies" in cookie_data:
-                    cookies: list[dict[str, str]] = cookie_data["cookies"]
-                    cookie = "; ".join(f"{c['name']}={c['value']}" for c in cookies if "douyin" in c.get("domain", ""))
-                elif isinstance(cookie_data, str):
-                    cookie = cookie_data
-            except Exception:
-                pass
-
+        resolved_account = account or cfg["default"]["account"]
         proxy: str = cfg["api"].get("proxy", "")
         timeout: int = cfg["api"].get("timeout", REQUEST_TIMEOUT)
-        return cls(cookie=cookie, proxy=proxy, timeout=int(timeout))
+        return cls(proxy=proxy, timeout=int(timeout), account=resolved_account)
 
     # ------------------------------------------------------------------
     # URL parsing
