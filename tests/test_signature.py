@@ -42,6 +42,12 @@ class TestBaseParams:
         assert "msToken" in params
         assert params["device_platform"] == "webapp"
 
+    def test_web_client_version_matches_search_request(self):
+        params = get_base_params()
+        assert params["version_code"] == "170400"
+        assert params["version_name"] == "17.4.0"
+        assert params["update_version_code"] == "170400"
+
     def test_mstoken_unique(self):
         p1 = get_base_params()
         p2 = get_base_params()

@@ -40,6 +40,7 @@ def get_base_params() -> dict[str, str]:
         "pc_client_type": "1",
         "version_code": "170400",
         "version_name": "17.4.0",
+        "update_version_code": "170400",
         "cookie_enabled": "true",
         "screen_width": "1920",
         "screen_height": "1080",
