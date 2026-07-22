@@ -37,6 +37,7 @@ API_DOMAIN = "https://www.douyin.com"
 
 # API endpoints
 SEARCH_URL = f"{API_DOMAIN}/aweme/v1/web/general/search/single/"
+VIDEO_SEARCH_URL = f"{API_DOMAIN}/aweme/v1/web/search/item/"
 VIDEO_DETAIL_URL = f"{API_DOMAIN}/aweme/v1/web/aweme/detail/"
 VIDEO_COMMENTS_URL = f"{API_DOMAIN}/aweme/v1/web/comment/list/"
 USER_PROFILE_URL = f"{API_DOMAIN}/aweme/v1/web/user/profile/other/"
@@ -63,8 +64,45 @@ REQUEST_TIMEOUT = 30
 SEARCH_CHANNEL_MAP = {
     "general": "aweme_general",
     "video": "aweme_video_web",
-    "atlas": "aweme_atlas",
+    "atlas": "aweme_general",
 }
+
+FILTER_DURATION_MAP = {
+    0: "",
+    1: "0-1",
+    2: "1-5",
+    3: "5-10000",
+}
+
+
+def _normalize_filter_duration(filter_duration: int) -> str:
+    """将公开的时长枚举转换为抖音 Web 使用的区间值。"""
+    try:
+        return FILTER_DURATION_MAP[filter_duration]
+    except KeyError as e:
+        raise ValueError("filter_duration must be one of: 0, 1, 2, 3") from e
+
+
+def _build_filter_selected(
+    sort_type: int,
+    publish_time: int,
+    filter_duration: str,
+    content_type: int = 0,
+) -> str | None:
+    """按综合搜索接口格式序列化筛选条件。"""
+    if sort_type == 0 and publish_time == 0 and not filter_duration and content_type == 0:
+        return None
+
+    filters = {
+        "sort_type": str(sort_type),
+        "publish_time": str(publish_time),
+    }
+    if filter_duration:
+        filters["filter_duration"] = filter_duration
+    if content_type:
+        filters["content_type"] = str(content_type)
+
+    return json.dumps(filters, separators=(",", ":"))
 
 
 class DouyinAPIError(Exception):
@@ -357,27 +395,37 @@ class DouyinAPIClient:
         if search_type == "user":
             return self.search_users(keyword, offset=offset, count=count)
 
-        # 映射 search_channel
         search_channel = SEARCH_CHANNEL_MAP.get(search_type, "aweme_general")
-
-        # 当使用了筛选条件时，is_filter_search 须为 "1"，否则服务端忽略筛选参数
-        has_filter = sort_type != 0 or publish_time != 0 or filter_duration != 0
-        is_filter_search = "1" if has_filter else "0"
+        duration_value = _normalize_filter_duration(filter_duration)
+        content_type = 2 if search_type == "atlas" else 0
+        has_filter = sort_type != 0 or publish_time != 0 or bool(duration_value) or content_type != 0
 
         params = {
             **get_base_params(),
             "keyword": keyword,
             "search_channel": search_channel,
-            "sort_type": str(sort_type),
-            "publish_time": str(publish_time),
-            "filter_duration": str(filter_duration),
             "offset": str(offset),
             "count": str(count),
-            "search_source": "normal_search",
+            "search_source": "tab_search" if has_filter else "normal_search",
             "query_correct_type": "1",
-            "is_filter_search": is_filter_search,
+            "is_filter_search": "1" if has_filter else "0",
+            "need_filter_settings": "1" if offset == 0 else "0",
         }
-        data = self._get(SEARCH_URL, params=params)
+
+        if search_type == "video":
+            if has_filter:
+                params["sort_type"] = str(sort_type)
+                params["publish_time"] = str(publish_time)
+                if duration_value:
+                    params["filter_duration"] = duration_value
+            search_url = VIDEO_SEARCH_URL
+        else:
+            filter_selected = _build_filter_selected(sort_type, publish_time, duration_value, content_type)
+            if filter_selected:
+                params["filter_selected"] = filter_selected
+            search_url = SEARCH_URL
+
+        data = self._get(search_url, params=params)
 
         if data.get("status_code") != 0:
             raise DouyinAPIError(f"搜索失败: {data.get('status_msg', 'unknown error')}")
