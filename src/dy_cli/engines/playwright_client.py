@@ -844,17 +844,27 @@ class PlaywrightClient:
             raise PlaywrightError("评论内容不能为空")
 
         commented = False
-        # Click comment icon to focus the input area
-        comment_icon = page.locator('[data-e2e="feed-comment-icon"]')
-        if await comment_icon.count() > 0:
-            await comment_icon.first.click()
-            await page.wait_for_timeout(1000)
+        # Click the visible comment input container to open the editor.
+        clicked = await page.evaluate("""() => {
+            const el = document.querySelector('.comment-input-inner-container')
+                || Array.from(document.querySelectorAll('*')).find(node =>
+                    (node.innerText || node.textContent || '').trim() === '留下你的精彩评论吧'
+                );
+            if (el) { el.click(); return true; }
+            return false;
+        }""")
+        if clicked:
+            await page.wait_for_timeout(800)
 
         # Find comment input (contenteditable or textarea)
         input_sel = page.locator(
             '[data-e2e="comment-input"], '
             '[class*="comment"] [contenteditable="true"], '
-            '[placeholder*="善语结善缘"], [placeholder*="说点什么"]'
+            '.public-DraftEditor-content[contenteditable="true"], '
+            '[role="combobox"][contenteditable="true"], '
+            '[contenteditable="true"], '
+            'textarea, '
+            '[placeholder*="善语结善缘"], [placeholder*="说点什么"], [placeholder*="评论"]'
         )
         if await input_sel.count() > 0:
             await input_sel.first.click()
@@ -865,7 +875,8 @@ class PlaywrightClient:
             # Submit
             send = page.locator(
                 '[data-e2e="comment-post"], '
-                'button:has-text("发布")'
+                'button:has-text("发布"), '
+                '.comment-input-inner-container .wchsYBpK'
             ).last
             if await send.count() > 0:
                 await send.click()
