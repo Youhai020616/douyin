@@ -12,6 +12,7 @@ Usage:
     dy comment AWEME_ID -c "内容"          评论
     dy favorite AWEME_ID                   收藏
     dy follow SEC_USER_ID                  关注
+    dy live list                           列出推荐直播间
     dy live info ROOM_ID                   直播信息
     dy live record ROOM_ID                 录制直播
     dy analytics                           数据看板

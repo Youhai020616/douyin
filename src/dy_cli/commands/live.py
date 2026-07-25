@@ -11,12 +11,36 @@ import click
 
 from dy_cli.engines.api_client import DouyinAPIClient, DouyinAPIError
 from dy_cli.utils import config
-from dy_cli.utils.output import console, error, info, print_json, print_live_info, success, warning
+from dy_cli.utils.output import console, error, info, print_json, print_live_info, print_live_rooms, success, warning
 
 
-@click.group("live", help="📺 直播功能 (查看/录制)")
+@click.group("live", help="📺 直播功能 (列出/查看/录制)")
 def live_group():
     pass
+
+
+@live_group.command("list", help="列出推荐直播间")
+@click.option("--count", type=click.IntRange(1, 50), default=20, show_default=True, help="房间数量")
+@click.option("--account", default=None, help="使用指定账号")
+@click.option("--json-output", "as_json", is_flag=True, help="输出 JSON")
+def live_list(count, account, as_json):
+    """列出直播首页推荐房间。"""
+    client = DouyinAPIClient.from_config(account)
+
+    try:
+        info(f"正在获取推荐直播间: {count} 条")
+        rooms = client.get_live_rooms(count=count)
+
+        if as_json:
+            print_json(rooms)
+        else:
+            print_live_rooms(rooms)
+
+    except DouyinAPIError as e:
+        error(f"获取直播房间失败: {e}")
+        raise SystemExit(1)
+    finally:
+        client.close()
 
 
 @live_group.command("info", help="查看直播间信息")

@@ -45,6 +45,7 @@ USER_POSTS_URL = f"{API_DOMAIN}/aweme/v1/web/aweme/post/"
 TRENDING_URL = f"{API_DOMAIN}/aweme/v1/web/hot/search/list/"
 USER_SEARCH_URL = f"{API_DOMAIN}/aweme/v1/web/discover/search/"
 LIVE_INFO_URL = "https://live.douyin.com/webcast/room/web/enter/"
+LIVE_FEED_URL = "https://live.douyin.com/webcast/feed/"
 FEED_URL = f"{API_DOMAIN}/aweme/v1/web/tab/feed/"
 SUGGEST_URL = f"{API_DOMAIN}/aweme/v1/web/api/suggest_words/"
 
@@ -235,9 +236,15 @@ class DouyinAPIClient:
     # HTTP methods
     # ------------------------------------------------------------------
 
-    def _get(self, url: str, params: dict[str, str] | None = None, **kwargs: Any) -> dict[str, Any]:
+    def _get(
+        self,
+        url: str,
+        params: dict[str, str] | None = None,
+        referer: str = "https://www.douyin.com/",
+        **kwargs: Any,
+    ) -> dict[str, Any]:
         """GET 请求，带签名、重试和反爬。"""
-        headers = get_headers(cookie=self.cookie)
+        headers = get_headers(cookie=self.cookie, referer=referer)
 
         # 构建完整 URL 并签名（添加 X-Bogus / a-bogus 参数）
         if params:
@@ -738,6 +745,42 @@ class DouyinAPIClient:
         if rooms:
             return rooms[0]
         return room_data
+
+    def get_live_rooms(self, count: int = 20) -> list[dict[str, Any]]:
+        """
+        获取直播首页推荐房间列表。
+
+        返回的每条记录包含顶层 web_rid，可直接用于 dy live info/record。
+        """
+        count = max(1, min(int(count), 50))
+        params = {
+            **get_base_params(),
+            "app_name": "douyin_web",
+            "live_id": "1",
+            "device_platform": "web",
+            "language": "zh-CN",
+            "enter_from": "link_share",
+            "request_tag_from": "web",
+            "need_map": "1",
+            "liveid": "1",
+            "is_draw": "1",
+            "inner_from_drawer": "0",
+            "custom_count": str(count),
+            "action": "load_more",
+            "action_type": "loadmore",
+            "enter_source": "web_homepage_hot_web_live_card",
+            "source_key": "web_homepage_hot_web_live_card",
+            "is_ssr": "true",
+        }
+        data = self._get(LIVE_FEED_URL, params=params, referer="https://live.douyin.com/")
+
+        if data.get("status_code") != 0:
+            raise DouyinAPIError(f"获取直播房间失败: {data.get('status_msg', 'unknown error')}")
+
+        rooms = data.get("data", [])
+        if not isinstance(rooms, list):
+            return []
+        return rooms[:count]
 
     # ------------------------------------------------------------------
     # Feed

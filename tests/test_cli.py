@@ -45,6 +45,7 @@ class TestSubcommandHelp:
         ["comments", "--help"],
         ["follow", "--help"],
         ["live", "--help"],
+        ["live", "list", "--help"],
         ["live", "info", "--help"],
         ["live", "record", "--help"],
         ["analytics", "--help"],
