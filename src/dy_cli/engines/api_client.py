@@ -7,6 +7,7 @@ Douyin API Client — 逆向 API 采集客户端。
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -555,12 +556,74 @@ class DouyinAPIClient:
             "count": str(count),
             "item_type": "0",
         }
-        data = self._get(VIDEO_COMMENTS_URL, params=params)
+        try:
+            data = self._get(VIDEO_COMMENTS_URL, params=params)
+        except DouyinAPIError as e:
+            if "空响应" not in str(e):
+                raise
+            data = self._get_comments_via_browser(aweme_id, cursor=cursor, count=count)
 
         if data.get("status_code") != 0:
             raise DouyinAPIError(f"获取评论失败: {data.get('status_msg', 'unknown error')}")
 
         return data
+
+    def _get_comments_via_browser(self, aweme_id: str, cursor: int = 0, count: int = 20) -> dict[str, Any]:
+        """评论接口的浏览器回退：使用页面签名后的 fetch 读取评论。"""
+
+        async def _fetch() -> dict[str, Any]:
+            from playwright.async_api import async_playwright
+
+            params = {
+                **get_base_params(),
+                "aweme_id": aweme_id,
+                "cursor": str(cursor),
+                "count": str(count),
+                "item_type": "0",
+            }
+            url = build_request_url(VIDEO_COMMENTS_URL, params)
+
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(headless=True)
+                context = await browser.new_context()
+                page = await context.new_page()
+                try:
+                    await page.goto(f"https://www.douyin.com/video/{aweme_id}", wait_until="domcontentloaded")
+                    await page.wait_for_timeout(8000)
+                    body = await page.evaluate(
+                        """async (inputUrl) => {
+                            const sign = window.byted_acrawler?.frontierSign;
+                            const sig = typeof sign === 'function' ? sign(inputUrl) : null;
+                            const signedUrl = sig && sig['X-Bogus']
+                                ? `${inputUrl}&X-Bogus=${encodeURIComponent(sig['X-Bogus'])}`
+                                : inputUrl;
+                            const resp = await fetch(signedUrl, {
+                                credentials: 'include',
+                                headers: {
+                                    'accept': 'application/json, text/plain, */*',
+                                    'referer': 'https://www.douyin.com/',
+                                },
+                            });
+                            return await resp.text();
+                        }""",
+                        url,
+                    )
+                finally:
+                    await context.close()
+                    await browser.close()
+
+            return json.loads(body)
+
+        try:
+            return asyncio.run(_fetch())
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            try:
+                return loop.run_until_complete(_fetch())
+            finally:
+                loop.close()
+        except json.JSONDecodeError as e:
+            raise DouyinAPIError(f"评论回退解析失败: {e}") from e
 
     # ------------------------------------------------------------------
     # User
