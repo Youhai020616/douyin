@@ -15,15 +15,19 @@ from dy_cli.utils.index_cache import resolve_id
 from dy_cli.utils.output import console, error, info, success, warning
 
 
-@click.command("download", help="下载抖音视频/图片 (无水印, 支持短索引/批量)")
+@click.command("download", help="下载抖音视频/图片 (无水印, 支持质量选择)")
 @click.argument("url_or_id")
 @click.option("--output-dir", "-o", default=None, help="保存目录 (默认 ~/Downloads/douyin)")
 @click.option("--music", is_flag=True, help="同时下载背景音乐")
+@click.option("--quality", "-q", default="best",
+              type=click.Choice(["1080", "720", "540", "best", "worst"]),
+              help="视频质量 (默认: best)")
+@click.option("--list-quality", is_flag=True, help="列出所有可用质量")
 @click.option("--limit", type=int, default=0, help="批量下载: 用户作品数量 (需配合 --user)")
 @click.option("--user", is_flag=True, help="批量下载该用户的全部作品 (URL_OR_ID 为 sec_user_id)")
 @click.option("--account", default=None, help="使用指定账号")
 @click.option("--json-output", "as_json", is_flag=True, help="仅输出下载链接 (JSON)")
-def download(url_or_id, output_dir, music, limit, user, account, as_json):
+def download(url_or_id, output_dir, music, quality, list_quality, limit, user, account, as_json):
     """
     下载抖音视频/图片（无水印）。支持短索引和批量下载。
 
@@ -63,7 +67,26 @@ def download(url_or_id, output_dir, music, limit, user, account, as_json):
 
         # Get download info
         info("正在获取下载链接...")
-        dl_info = client.get_download_url(aweme_id)
+        if quality != "best" or list_quality:
+            dl_info = client.get_download_url_with_quality(aweme_id, quality)
+        else:
+            dl_info = client.get_download_url(aweme_id)
+
+        # 列出可用质量
+        if list_quality:
+            qualities = dl_info.get("available_qualities", [])
+            if not qualities:
+                error("未找到可用质量信息")
+                return
+            
+            print("\n可用视频质量:")
+            print("-" * 50)
+            for i, q in enumerate(qualities):
+                gear = q.get("gear_name", "unknown")
+                bitrate = q.get("bit_rate", 0)
+                print(f"  [{i+1}] {gear:20} - {bitrate/1000:.0f} kbps")
+            print("-" * 50)
+            return
 
         if as_json:
             from dy_cli.utils.output import print_json
@@ -72,10 +95,23 @@ def download(url_or_id, output_dir, music, limit, user, account, as_json):
 
         desc = dl_info.get("desc", "untitled")
         author = dl_info.get("author", "unknown")
+        quality_info = dl_info.get("quality", {})
+
+        # 显示选择的质量
+        if quality_info:
+            gear = quality_info.get("gear_name", "unknown")
+            bitrate = quality_info.get("bit_rate", 0)
+            info(f"选择质量: {gear} ({bitrate/1000:.0f} kbps)")
 
         # Sanitize filename
         safe_name = re.sub(r'[\\/:*?"<>|\n\r]', '_', desc)[:50].strip('_') or aweme_id
         prefix = f"{author}_{safe_name}"
+        
+        # 添加质量后缀
+        if quality_info:
+            gear = quality_info.get("gear_name", "")
+            if gear:
+                prefix = f"{prefix}_{gear}"
 
         downloaded_files = []
 
