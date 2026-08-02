@@ -135,6 +135,9 @@ async def sign_url_async(url: str) -> str:
                     if (window._webmsxyw) {
                         return window._webmsxyw(url);
                     }
+                    if (window.byted_acrawler && window.byted_acrawler.frontierSign) {
+                        return window.byted_acrawler.frontierSign(url);
+                    }
                     if (window.byted_acrawler && window.byted_acrawler.sign) {
                         return window.byted_acrawler.sign({url: url});
                     }
