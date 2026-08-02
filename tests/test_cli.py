@@ -1,6 +1,9 @@
 """Tests for CLI commands (no network, help/version only)."""
+
+import pytest
 from click.testing import CliRunner
 
+from dy_cli.commands import search
 from dy_cli.main import cli
 
 runner = CliRunner()
@@ -104,3 +107,38 @@ class TestAliases:
     def test_acc_alias(self):
         result = runner.invoke(cli, ["acc", "--help"])
         assert "账号" in result.output
+
+
+class TestDetailComments:
+    def test_comments_fall_back_to_logged_in_playwright_client(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        aweme_id = "1234567890123456789"
+
+        class FakeAPIClient:
+            def get_video_detail(self, requested_aweme_id: str) -> dict[str, str]:
+                assert requested_aweme_id == aweme_id
+                return {"aweme_id": requested_aweme_id}
+
+            def close(self) -> None:
+                return None
+
+        class FakePlaywrightClient:
+            def __init__(self, account: str | None, headless: bool) -> None:
+                assert account == "test-account"
+                assert headless is True
+
+            def get_comments(self, requested_aweme_id: str, count: int) -> list[dict[str, str]]:
+                assert requested_aweme_id == aweme_id
+                assert count == 3
+                return [{"text": "fallback comment"}]
+
+        monkeypatch.setattr(search.DouyinAPIClient, "from_config", lambda _account: FakeAPIClient())
+        monkeypatch.setattr(search, "PlaywrightClient", FakePlaywrightClient)
+        monkeypatch.setattr(search, "print_video_detail", lambda _detail: None)
+        monkeypatch.setattr(search, "warning", lambda _message: None)
+
+        printed: list[list[dict[str, str]]] = []
+        monkeypatch.setattr(search, "print_comments", lambda comments: printed.append(comments))
+
+        search.detail.callback(aweme_id, True, 3, "test-account", False)
+
+        assert printed == [[{"text": "fallback comment"}]]

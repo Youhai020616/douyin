@@ -696,7 +696,10 @@ class PlaywrightClient:
         """从视频页面抓取评论。"""
         if not self.cookie_exists():
             raise PlaywrightError("未登录")
-        return _run_async(self._get_comments_async(aweme_id, count))
+        try:
+            return _run_async(self._get_comments_async(aweme_id, count))
+        except Exception as e:
+            raise PlaywrightError(f"抓取评论失败: {e}") from e
 
     async def _get_comments_async(self, aweme_id: str, count: int) -> list[dict]:
         from playwright.async_api import async_playwright
@@ -712,6 +715,7 @@ class PlaywrightClient:
                 await page.goto(
                     f"https://www.douyin.com/video/{aweme_id}",
                     wait_until="domcontentloaded",
+                    timeout=15_000,
                 )
                 await page.wait_for_timeout(6000)
 

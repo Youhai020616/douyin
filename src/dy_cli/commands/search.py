@@ -7,6 +7,7 @@ from __future__ import annotations
 import click
 
 from dy_cli.engines.api_client import DouyinAPIClient, DouyinAPIError
+from dy_cli.engines.playwright_client import PlaywrightClient, PlaywrightError
 from dy_cli.utils.export import export_data
 from dy_cli.utils.index_cache import resolve_id, save_index
 from dy_cli.utils.output import (
@@ -179,16 +180,17 @@ def detail(aweme_id, comments, comment_count, account, as_json):
         if comments:
             info("正在加载评论...")
             try:
-                comment_data = client.get_comments(aweme_id, count=comment_count)
-                comment_list = comment_data.get("comments", [])
-
-                if as_json:
-                    print_json({"detail": video_detail, "comments": comment_list})
-                else:
-                    print_comments(comment_list)
-            except DouyinAPIError as e:
+                comment_list = PlaywrightClient(account=account, headless=True).get_comments(
+                    aweme_id, count=comment_count
+                )
+            except PlaywrightError as e:
                 warning(f"评论加载失败: {e}")
-                info("评论 API 需要签名，可单独用 [bold]dy comments[/] 尝试")
+                return
+
+            if as_json:
+                print_json({"detail": video_detail, "comments": comment_list})
+            else:
+                print_comments(comment_list)
 
     except DouyinAPIError as e:
         error(f"获取详情失败: {e}")
