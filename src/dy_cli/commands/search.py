@@ -180,17 +180,12 @@ def detail(aweme_id, comments, comment_count, account, as_json):
         if comments:
             info("正在加载评论...")
             try:
-                comment_data = client.get_comments(aweme_id, count=comment_count, use_browser_fallback=False)
-                comment_list = comment_data.get("comments", [])
-            except DouyinAPIError as e:
-                warning(f"评论 API 加载失败: {e}，正在使用浏览器回退...")
-                try:
-                    comment_list = PlaywrightClient(account=account, headless=True).get_comments(
-                        aweme_id, count=comment_count
-                    )
-                except PlaywrightError as fallback_error:
-                    warning(f"评论浏览器回退失败: {fallback_error}")
-                    return
+                comment_list = PlaywrightClient(account=account, headless=True).get_comments(
+                    aweme_id, count=comment_count
+                )
+            except PlaywrightError as e:
+                warning(f"评论加载失败: {e}")
+                return
 
             if as_json:
                 print_json({"detail": video_detail, "comments": comment_list})

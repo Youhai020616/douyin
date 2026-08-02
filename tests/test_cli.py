@@ -4,7 +4,6 @@ import pytest
 from click.testing import CliRunner
 
 from dy_cli.commands import search
-from dy_cli.engines.api_client import DouyinAPIError
 from dy_cli.main import cli
 
 runner = CliRunner()
@@ -118,14 +117,6 @@ class TestDetailComments:
             def get_video_detail(self, requested_aweme_id: str) -> dict[str, str]:
                 assert requested_aweme_id == aweme_id
                 return {"aweme_id": requested_aweme_id}
-
-            def get_comments(
-                self, requested_aweme_id: str, count: int, use_browser_fallback: bool
-            ) -> dict[str, object]:
-                assert requested_aweme_id == aweme_id
-                assert count == 3
-                assert use_browser_fallback is False
-                raise DouyinAPIError("空响应")
 
             def close(self) -> None:
                 return None
