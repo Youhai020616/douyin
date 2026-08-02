@@ -180,7 +180,7 @@ def detail(aweme_id, comments, comment_count, account, as_json):
         if comments:
             info("正在加载评论...")
             try:
-                comment_data = client.get_comments(aweme_id, count=comment_count)
+                comment_data = client.get_comments(aweme_id, count=comment_count, use_browser_fallback=False)
                 comment_list = comment_data.get("comments", [])
             except DouyinAPIError as e:
                 warning(f"评论 API 加载失败: {e}，正在使用浏览器回退...")

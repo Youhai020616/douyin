@@ -119,9 +119,12 @@ class TestDetailComments:
                 assert requested_aweme_id == aweme_id
                 return {"aweme_id": requested_aweme_id}
 
-            def get_comments(self, requested_aweme_id: str, count: int) -> dict[str, object]:
+            def get_comments(
+                self, requested_aweme_id: str, count: int, use_browser_fallback: bool
+            ) -> dict[str, object]:
                 assert requested_aweme_id == aweme_id
                 assert count == 3
+                assert use_browser_fallback is False
                 raise DouyinAPIError("空响应")
 
             def close(self) -> None:

@@ -554,6 +554,7 @@ class DouyinAPIClient:
         aweme_id: str,
         cursor: int = 0,
         count: int = 20,
+        use_browser_fallback: bool = True,
     ) -> dict[str, Any]:
         """获取视频评论列表。"""
         params = {
@@ -566,7 +567,7 @@ class DouyinAPIClient:
         try:
             data = self._get(VIDEO_COMMENTS_URL, params=params)
         except DouyinAPIError as e:
-            if "空响应" not in str(e):
+            if not use_browser_fallback or "空响应" not in str(e):
                 raise
             data = self._get_comments_via_browser(aweme_id, cursor=cursor, count=count)
 
