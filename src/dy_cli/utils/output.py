@@ -231,6 +231,50 @@ def print_live_info(info_data: dict):
     console.print(Panel(panel_text, title=f"📺 {title}", border_style="magenta"))
 
 
+def print_live_rooms(rooms: list[dict]):
+    """打印直播房间列表。"""
+    if not rooms:
+        warning("未找到直播房间")
+        return
+
+    table = Table(title=f"📺 直播房间 ({len(rooms)} 条)", box=box.ROUNDED, show_lines=True)
+    table.add_column("#", style="dim", width=3)
+    table.add_column("标题", max_width=34, overflow="fold")
+    table.add_column("主播", max_width=16, overflow="fold")
+    table.add_column("在线", justify="right", width=8)
+    table.add_column("房间号", style="dim", max_width=18)
+
+    for i, item in enumerate(rooms, 1):
+        room_data = item.get("data", {})
+        if not isinstance(room_data, dict):
+            room_data = {}
+        owner = room_data.get("owner", {})
+        if not isinstance(owner, dict):
+            owner = {}
+
+        web_rid = (
+            item.get("web_rid")
+            or owner.get("web_rid")
+            or room_data.get("web_rid")
+            or room_data.get("id_str")
+            or room_data.get("id")
+            or "-"
+        )
+        title = room_data.get("title") or item.get("title") or "-"
+        nickname = owner.get("nickname") or item.get("owner_nickname") or "-"
+        user_count = room_data.get("user_count", item.get("user_count", "-"))
+
+        table.add_row(
+            str(i),
+            str(title),
+            str(nickname),
+            _fmt_count(user_count),
+            str(web_rid),
+        )
+
+    console.print(table)
+
+
 def print_user_profile(profile: dict):
     """打印用户资料。"""
     nickname = profile.get("nickname", "-")

@@ -5,7 +5,7 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
-from dy_cli.engines.api_client import SEARCH_URL, VIDEO_SEARCH_URL, DouyinAPIClient
+from dy_cli.engines.api_client import LIVE_FEED_URL, SEARCH_URL, VIDEO_SEARCH_URL, DouyinAPIClient
 from dy_cli.utils.signature import build_request_url
 
 
@@ -156,3 +156,34 @@ class TestSearchRequest:
 
         assert result == {"status_code": 0, "user_list": []}
         assert captured == {"keyword": "作者", "offset": 5, "count": 12}
+
+
+class TestLiveRequest:
+    def test_live_rooms_uses_home_feed_endpoint(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        client = DouyinAPIClient()
+        captured: dict[str, object] = {}
+
+        def fake_get(
+            url: str,
+            params: dict[str, str] | None = None,
+            referer: str = "",
+            **_kwargs: object,
+        ) -> dict[str, object]:
+            assert params is not None
+            captured.update(url=url, params=params, referer=referer)
+            return {"status_code": 0, "data": [{"web_rid": "123456", "data": {"title": "直播间"}}]}
+
+        monkeypatch.setattr(client, "_get", fake_get)
+
+        rooms = client.get_live_rooms(count=8)
+
+        assert captured["url"] == LIVE_FEED_URL
+        assert captured["referer"] == "https://live.douyin.com/"
+        params = captured["params"]
+        assert isinstance(params, dict)
+        assert params["app_name"] == "douyin_web"
+        assert params["device_platform"] == "web"
+        assert params["custom_count"] == "8"
+        assert params["action"] == "load_more"
+        assert params["source_key"] == "web_homepage_hot_web_live_card"
+        assert rooms == [{"web_rid": "123456", "data": {"title": "直播间"}}]

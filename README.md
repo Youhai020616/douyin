@@ -46,6 +46,7 @@ dy read 1                               # Read 1st result (short index)
 dy dl 1                                 # Download 1st result (no watermark)
 dy like 1                               # Like 1st result
 dy trending                             # Hot trending Top 50
+dy live list                            # List recommended live rooms
 dy publish -t "标题" -c "描述" -v video.mp4   # Publish video
 ```
 
@@ -55,7 +56,7 @@ dy publish -t "标题" -c "描述" -v video.mp4   # Publish video
 - 📥 **Download** — no-watermark video/image with progress bar, batch user download
 - 📝 **Publish** — video & image posts with tags, cover, scheduling, visibility
 - 🔥 **Trending** — real-time hot search Top 50 with watch mode
-- 📺 **Live** — stream info, URL extraction, ffmpeg recording
+- 📺 **Live** — room listing, stream info, URL extraction, ffmpeg recording
 - 💬 **Interact** — like, favorite, comment, follow (Playwright)
 - 📊 **Analytics** — creator dashboard via XHR interception
 - 👤 **Profile** — user info, posts listing
@@ -95,6 +96,8 @@ dy dl SEC_USER_ID --user --limit 20      # Batch download user posts
 dy trending                              # Top 50
 dy trending --count 10 -o hot.json       # Export top 10
 dy trending --watch                      # Auto-refresh every 5 min
+dy live list                             # Recommended live rooms
+dy live list --count 10                  # Show 10 rooms
 dy live info ROOM_ID                     # Live stream info
 dy live record ROOM_ID                   # Record with ffmpeg
 ```

@@ -122,6 +122,8 @@ dy trending --json-output                # JSON 输出
 ### 直播
 
 ```bash
+dy live list                             # 列出推荐直播间
+dy live list --count 10                  # 指定数量
 dy live info ROOM_ID                     # 直播间信息
 dy live record ROOM_ID                   # 录制直播 (需要 ffmpeg)
 dy live record ROOM_ID --quality HD1     # 指定画质
