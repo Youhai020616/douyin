@@ -52,6 +52,7 @@ dy publish -t "标题" -c "描述" -v video.mp4
 
 ## 提示
 
-- 对于 AI 调用，建议使用 `--json-output` 获取结构化数据
+- 对于 AI 调用，建议使用 `--json-output` 获取结构化数据，输出为 `{ok, schema_version, data}` 信封，约定见 [SCHEMA.md](../SCHEMA.md)
+- 无人值守场景建议 `dy config set playwright.headless true`，避免弹出浏览器窗口
 - 发布前使用 `--dry-run` 预览
 - 批量操作时注意加延时，避免触发风控

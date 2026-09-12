@@ -10,10 +10,18 @@
 - Playwright Chromium (setup.sh 会自动安装)
 - ffmpeg (可选，直播录制需要: `brew install ffmpeg`)
 
-### 一键安装
+### pip 安装
 
 ```bash
-git clone https://github.com/your-username/douyin.git
+pip install dy-cli
+playwright install chromium
+dy init
+```
+
+### 一键安装（源码）
+
+```bash
+git clone https://github.com/Youhai020616/douyin.git
 cd douyin
 bash setup.sh
 ```
@@ -26,10 +34,10 @@ bash setup.sh
 - ✅ 注册 `dy` 命令
 - ✅ 生成 `activate.sh` 快捷激活脚本
 
-### 手动安装
+### 手动安装（源码）
 
 ```bash
-git clone https://github.com/your-username/douyin.git
+git clone https://github.com/Youhai020616/douyin.git
 cd douyin
 python3 -m venv .venv
 source .venv/bin/activate
@@ -73,7 +81,21 @@ dy search "春招" --time 一天内            # 限制时间
 dy search "科技" --type video             # 仅视频
 dy search "风景" --type atlas             # 仅图文
 dy search "科技" --count 50              # 返回 50 条
+dy search "科技" --type user             # 搜索用户
+dy search "科技" -o results.csv          # 导出 (.json/.csv/.yaml)
 dy search "科技" --json-output           # JSON 输出
+```
+
+### 短索引
+
+搜索结果会自动缓存，后续命令可直接用序号代替 aweme_id：
+
+```bash
+dy search "美食"
+dy read 1                                # 查看第 1 条详情 (等价 dy detail 1)
+dy detail 1 --comments                   # 详情 + 评论
+dy dl 1                                  # 下载第 1 条
+dy like 1                                # 点赞第 1 条
 ```
 
 ### 下载
@@ -189,6 +211,7 @@ dy config reset                          # 重置默认
 | `dy s` | `dy search` |
 | `dy dl` | `dy download` |
 | `dy t` | `dy trending` |
+| `dy r` / `dy read` | `dy detail` |
 | `dy fav` | `dy favorite` |
 | `dy noti` | `dy notifications` |
 | `dy stat` | `dy status` |
