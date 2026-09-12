@@ -8,8 +8,8 @@ import click
 from dy_cli.engines.playwright_client import PlaywrightClient, PlaywrightError
 from dy_cli.utils import config
 from dy_cli.utils.output import (
+    DyCliError,
     console,
-    error,
     info,
     print_analytics,
     print_json,
@@ -32,17 +32,14 @@ def analytics(csv_file, page_size, account, as_json):
     )
 
     if not client.cookie_exists():
-        error("未登录，请先运行: dy login")
-        raise SystemExit(1)
+        raise DyCliError("not_authenticated", "未登录，请先运行: dy login")
 
     info("正在获取数据看板 (Playwright)...")
 
     try:
         result = client.get_analytics(page_size=page_size)
     except PlaywrightError as e:
-        error(f"获取数据失败: {e}")
-        info("请确保已登录: dy status")
-        raise SystemExit(1)
+        raise DyCliError("playwright_error", f"获取数据失败: {e} (请确保已登录: dy status)")
 
     # Parse API data if captured
     api_items = result.get("api_data", {}).get("list", {}).get("items", [])
@@ -102,16 +99,14 @@ def notifications(account, as_json):
     )
 
     if not client.cookie_exists():
-        error("未登录，请先运行: dy login")
-        raise SystemExit(1)
+        raise DyCliError("not_authenticated", "未登录，请先运行: dy login")
 
     info("正在获取通知消息...")
 
     try:
         result = client.get_notifications()
     except PlaywrightError as e:
-        error(f"获取通知失败: {e}")
-        raise SystemExit(1)
+        raise DyCliError("playwright_error", f"获取通知失败: {e}")
 
     if as_json:
         print_json(result)

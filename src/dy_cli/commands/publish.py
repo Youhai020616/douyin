@@ -9,7 +9,7 @@ import click
 
 from dy_cli.engines.playwright_client import PlaywrightClient, PlaywrightError
 from dy_cli.utils import config
-from dy_cli.utils.output import console, error, info, success
+from dy_cli.utils.output import DyCliError, console, info, print_json, success
 
 
 @click.command("publish", help="发布视频或图文到抖音")
@@ -26,7 +26,9 @@ from dy_cli.utils.output import console, error, info, success
 @click.option("--account", default=None, help="使用指定账号")
 @click.option("--headless", is_flag=True, help="无头模式 (不显示浏览器)")
 @click.option("--dry-run", is_flag=True, help="预览模式，不实际发布")
-def publish(title, content, content_file, video, images, tags, visibility, schedule, thumbnail, account, headless, dry_run):
+@click.option("--json-output", "as_json", is_flag=True, help="输出 JSON")
+def publish(title, content, content_file, video, images, tags, visibility, schedule, thumbnail,
+            account, headless, dry_run, as_json):
     """发布视频或图文。"""
 
     # Handle content
@@ -39,27 +41,36 @@ def publish(title, content, content_file, video, images, tags, visibility, sched
     # Validate media
     images = list(images)
     if not images and not video:
-        error("必须提供视频 (--video) 或图片 (--images)")
-        raise SystemExit(1)
+        raise DyCliError("invalid_argument", "必须提供视频 (--video) 或图片 (--images)")
 
     if video and images:
-        error("不能同时提供视频和图片，请选择一种")
-        raise SystemExit(1)
+        raise DyCliError("invalid_argument", "不能同时提供视频和图片，请选择一种")
 
     # Validate files
     if video and not video.startswith("http") and not os.path.isfile(video):
-        error(f"视频文件不存在: {video}")
-        raise SystemExit(1)
+        raise DyCliError("invalid_argument", f"视频文件不存在: {video}")
 
     for img in images:
         if not img.startswith("http") and not os.path.isfile(img):
-            error(f"图片文件不存在: {img}")
-            raise SystemExit(1)
+            raise DyCliError("invalid_argument", f"图片文件不存在: {img}")
 
     tags = list(tags)
 
     # Dry run
     if dry_run:
+        if as_json:
+            print_json({
+                "dry_run": True,
+                "title": title,
+                "content": content,
+                "video": video,
+                "images": images,
+                "tags": tags,
+                "visibility": visibility,
+                "schedule": schedule,
+                "thumbnail": thumbnail,
+            })
+            return
         console.print()
         info("📋 发布预览:")
         console.print(f"  [bold]标题:[/] {title}")
@@ -89,13 +100,12 @@ def publish(title, content, content_file, video, images, tags, visibility, sched
     )
 
     if not client.cookie_exists():
-        error("未登录，请先运行: dy login")
-        raise SystemExit(1)
+        raise DyCliError("not_authenticated", "未登录，请先运行: dy login")
 
     try:
         if video:
             info(f"正在发布视频: {os.path.basename(video)}")
-            client.publish_video(
+            result = client.publish_video(
                 title=title,
                 content=content,
                 video_path=os.path.abspath(video),
@@ -106,7 +116,7 @@ def publish(title, content, content_file, video, images, tags, visibility, sched
             )
         else:
             info(f"正在发布图文 ({len(images)} 张图片)")
-            client.publish_image_text(
+            result = client.publish_image_text(
                 title=title,
                 content=content,
                 images=[os.path.abspath(img) if not img.startswith("http") else img for img in images],
@@ -115,9 +125,10 @@ def publish(title, content, content_file, video, images, tags, visibility, sched
                 schedule_at=schedule,
             )
 
-        success("发布成功! 🎉")
-        info("提示: 可用 [bold]dy search[/] 搜索验证发布状态")
-
     except PlaywrightError as e:
-        error(f"发布失败: {e}")
-        raise SystemExit(1)
+        raise DyCliError("playwright_error", f"发布失败: {e}")
+
+    success("发布成功! 🎉")
+    info("提示: 可用 [bold]dy search[/] 搜索验证发布状态")
+    if as_json:
+        print_json(result)

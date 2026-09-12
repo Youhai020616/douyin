@@ -9,7 +9,7 @@ import click
 
 from dy_cli.engines.api_client import DouyinAPIClient, DouyinAPIError
 from dy_cli.utils.export import export_data
-from dy_cli.utils.output import console, error, info, print_json, print_trending, warning
+from dy_cli.utils.output import DyCliError, console, info, print_json, print_trending, warning
 
 
 @click.command("trending", help="🔥 抖音热榜")
@@ -30,8 +30,7 @@ def trending(count, watch, account, as_json, output):
     except KeyboardInterrupt:
         info("已退出热榜监控")
     except DouyinAPIError as e:
-        error(f"获取热榜失败: {e}")
-        raise SystemExit(1)
+        raise DyCliError("api_error", f"获取热榜失败: {e}")
     finally:
         client.close()
 

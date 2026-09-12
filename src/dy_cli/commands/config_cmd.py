@@ -6,7 +6,7 @@ from __future__ import annotations
 import click
 
 from dy_cli.utils import config
-from dy_cli.utils.output import console, error, info, print_json, success
+from dy_cli.utils.output import DyCliError, console, info, print_json, success
 
 
 @click.group("config", help="配置管理")
@@ -54,8 +54,7 @@ def get_config(key):
     """获取单个配置项。"""
     value = config.get(key)
     if value is None:
-        error(f"配置项不存在: {key}")
-        raise SystemExit(1)
+        raise DyCliError("not_found", f"配置项不存在: {key}")
     console.print(f"{key} = {value}")
 
 

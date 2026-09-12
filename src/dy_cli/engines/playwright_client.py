@@ -8,9 +8,15 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
 from datetime import datetime
 
 from dy_cli.utils import config
+
+
+def _log(msg: str) -> None:
+    """进度提示走 stderr，保持 stdout 只承载数据。"""
+    print(msg, file=sys.stderr)
 
 
 class PlaywrightError(Exception):
@@ -114,8 +120,8 @@ class PlaywrightClient:
             page = await context.new_page()
             await page.goto(self.CREATOR_URL, wait_until="domcontentloaded")
 
-            print("[dy] 请使用抖音 App 扫码登录...")
-            print("[dy] 登录成功后，浏览器会自动关闭")
+            _log("[dy] 请使用抖音 App 扫码登录...")
+            _log("[dy] 登录成功后，浏览器会自动关闭")
 
             # Wait for user to login — detect navigation to creator dashboard
             try:
@@ -125,12 +131,12 @@ class PlaywrightClient:
                 )
                 await page.wait_for_timeout(3000)
             except Exception:
-                print("[dy] 登录超时")
+                _log("[dy] 登录超时")
                 await browser.close()
                 return False
 
             # Visit multiple pages to collect ALL cookies
-            print("[dy] 正在收集完整 Cookie...")
+            _log("[dy] 正在收集完整 Cookie...")
             for url in [
                 "https://www.douyin.com/",
                 "https://creator.douyin.com/creator-micro/content/manage",
@@ -147,7 +153,7 @@ class PlaywrightClient:
 
             cookies = await context.cookies()
             douyin_count = len([c for c in cookies if "douyin" in c.get("domain", "")])
-            print(f"[dy] Cookie 已保存: {douyin_count} 个 ({self.cookie_file})")
+            _log(f"[dy] Cookie 已保存: {douyin_count} 个 ({self.cookie_file})")
             await browser.close()
             return True
 
@@ -215,7 +221,7 @@ class PlaywrightClient:
                 # Upload video file
                 upload_input = page.locator('input[type="file"]').first
                 await upload_input.set_input_files(video_path)
-                print(f"[dy] 正在上传视频: {os.path.basename(video_path)}")
+                _log(f"[dy] 正在上传视频: {os.path.basename(video_path)}")
 
                 # Wait for upload to complete (look for editor/title input)
                 await page.wait_for_timeout(5000)
@@ -317,20 +323,20 @@ class PlaywrightClient:
                         '.map(t=>t.textContent.trim()).filter(Boolean)'
                     )
                     if toast and "封面" in str(toast):
-                        print("[dy] 封面设置失败，请手动设置封面后发布")
+                        _log("[dy] 封面设置失败，请手动设置封面后发布")
                     elif toast and "成功" in str(toast):
-                        print("[dy] 发布成功!")
+                        _log("[dy] 发布成功!")
                     else:
                         # Wait for navigation to manage page
                         for _ in range(15):
                             await page.wait_for_timeout(2000)
                             if "manage" in page.url:
-                                print("[dy] 发布成功!")
+                                _log("[dy] 发布成功!")
                                 break
                         else:
-                            print("[dy] 发布请求已提交")
+                            _log("[dy] 发布请求已提交")
                 else:
-                    print("[dy] 未找到发布按钮，内容已填写，请手动确认")
+                    _log("[dy] 未找到发布按钮，内容已填写，请手动确认")
                     if not self.headless:
                         await page.wait_for_timeout(30000)
 
@@ -384,11 +390,11 @@ class PlaywrightClient:
                 if await done_btn.count() > 0:
                     await done_btn.last.click(force=True)
                     await page.wait_for_timeout(2000)
-                    print("[dy] 封面已设置")
+                    _log("[dy] 封面已设置")
             else:
-                print("[dy] 未找到封面选择区域")
+                _log("[dy] 未找到封面选择区域")
         except Exception as e:
-            print(f"[dy] 封面设置跳过: {e}")
+            _log(f"[dy] 封面设置跳过: {e}")
 
     # ------------------------------------------------------------------
     # Publish image/text
@@ -457,7 +463,7 @@ class PlaywrightClient:
                     try:
                         await upload_input.wait_for(timeout=5000)
                         await upload_input.set_input_files(local_images)
-                        print(f"[dy] 正在上传 {len(local_images)} 张图片")
+                        _log(f"[dy] 正在上传 {len(local_images)} 张图片")
                         await page.wait_for_timeout(3000)
                     except Exception:
                         # Try generic file input
@@ -517,9 +523,9 @@ class PlaywrightClient:
 
                 if published:
                     await page.wait_for_timeout(5000)
-                    print("[dy] 发布请求已提交")
+                    _log("[dy] 发布请求已提交")
                 else:
-                    print("[dy] 未找到发布按钮，内容已填写，请手动确认")
+                    _log("[dy] 未找到发布按钮，内容已填写，请手动确认")
                     if not self.headless:
                         await page.wait_for_timeout(30000)
 
@@ -553,7 +559,7 @@ class PlaywrightClient:
                     await time_input.fill(date_str)
                     await page.keyboard.press("Enter")
         except Exception:
-            print("[dy] 定时发布设置失败，将立即发布")
+            _log("[dy] 定时发布设置失败，将立即发布")
 
     # ------------------------------------------------------------------
     # Analytics

@@ -72,7 +72,7 @@ dy publish -t "标题" -c "描述" -v video.mp4   # 发布视频
 - 📦 **导出** — `dy search "AI" -o results.csv`（JSON / CSV / YAML）
 - 🔐 **登录** — 扫码登录 + 浏览器 Cookie 自动提取
 - 👥 **多账号** — Cookie 按账号隔离存储
-- 🤖 **Agent 友好** — `--json-output` 输出统一 JSON 信封，便于 AI Agent 与脚本解析
+- 🤖 **Agent 友好** — `--json-output` 输出统一 JSON 信封，成功与失败都可机器解析；stdout 只有数据，进度提示走 stderr
 - 🛡️ **反检测** — 高斯抖动延迟、指数退避、验证码冷却
 
 ## 命令
@@ -164,17 +164,20 @@ dy config set api.proxy http://...       # 设置代理
 
 ## 面向 AI Agent 的结构化输出
 
-支持 `--json-output` 的命令（search / detail / download / trending / live / profile / comments / analytics 等）会将结果包在统一信封中输出：
+几乎所有命令支持 `--json-output`：stdout 只输出一个 JSON 信封，进度提示全部走 stderr，可直接管道给 `jq` 或由 Agent 解析：
 
-```json
-{
-  "ok": true,
-  "schema_version": "1",
-  "data": ...          // 该命令的结果（列表或对象）
-}
+```bash
+dy trending --count 3 --json-output | jq '.data[].word'
+dy status --json-output | jq '.data.authenticated'
+dy like 1 --json-output            # 变更类命令也返回结构化结果
 ```
 
-失败时命令以非零退出码结束，错误信息输出到 stderr。完整约定见 [SCHEMA.md](./SCHEMA.md)，在 Claude Code / Cursor 中作为 Skill 使用见 [docs/claude-code-integration.md](./docs/claude-code-integration.md)。
+```json
+{ "ok": true,  "schema_version": "1", "data": ... }
+{ "ok": false, "schema_version": "1", "error": { "code": "not_authenticated", "message": "..." } }
+```
+
+失败时退出码为 1，`error.code` 取值固定（`not_authenticated` / `invalid_argument` / `api_error` / `playwright_error` 等）。完整约定见 [SCHEMA.md](./SCHEMA.md)，在 Claude Code / Cursor 中作为 Skill 使用见 [docs/claude-code-integration.md](./docs/claude-code-integration.md)。
 
 ## 配置
 

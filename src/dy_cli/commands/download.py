@@ -12,7 +12,7 @@ from rich.progress import BarColumn, DownloadColumn, Progress, SpinnerColumn, Te
 from dy_cli.engines.api_client import DouyinAPIClient, DouyinAPIError
 from dy_cli.utils import config
 from dy_cli.utils.index_cache import resolve_id
-from dy_cli.utils.output import console, error, info, success, warning
+from dy_cli.utils.output import DyCliError, console, info, print_json, success, warning
 
 
 @click.command("download", help="下载抖音视频/图片 (无水印, 支持短索引/批量)")
@@ -51,8 +51,7 @@ def download(url_or_id, output_dir, music, limit, user, account, as_json):
         try:
             url_or_id = resolve_id(url_or_id)
         except ValueError as e:
-            error(str(e))
-            raise SystemExit(1)
+            raise DyCliError("invalid_argument", str(e))
         if url_or_id.isdigit():
             aweme_id = url_or_id
         else:
@@ -66,7 +65,6 @@ def download(url_or_id, output_dir, music, limit, user, account, as_json):
         dl_info = client.get_download_url(aweme_id)
 
         if as_json:
-            from dy_cli.utils.output import print_json
             print_json(dl_info)
             return
 
@@ -119,8 +117,7 @@ def download(url_or_id, output_dir, music, limit, user, account, as_json):
             warning("未找到可下载的内容")
 
     except DouyinAPIError as e:
-        error(f"下载失败: {e}")
-        raise SystemExit(1)
+        raise DyCliError("api_error", f"下载失败: {e}")
     finally:
         client.close()
 

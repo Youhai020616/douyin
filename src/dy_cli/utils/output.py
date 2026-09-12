@@ -1,27 +1,33 @@
 """
 统一输出格式化 — 表格、JSON、状态信息。
+
+约定：stdout 只承载数据（表格 / JSON），进度与状态提示一律走 stderr，
+保证 `dy xxx --json-output | jq` 可直接解析。
 """
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import IO, Any
 
+import click
 from rich import box
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from dy_cli.utils.envelope import error_envelope, success_envelope
+
 console = Console()
 err_console = Console(stderr=True)
 
 
 # ------------------------------------------------------------------
-# 基础状态输出
+# 基础状态输出（全部 stderr）
 # ------------------------------------------------------------------
 
 def success(msg: str):
-    console.print(f"[bold green]✓[/] {msg}")
+    err_console.print(f"[bold green]✓[/] {msg}")
 
 
 def error(msg: str):
@@ -29,11 +35,32 @@ def error(msg: str):
 
 
 def warning(msg: str):
-    console.print(f"[bold yellow]⚠[/] {msg}")
+    err_console.print(f"[bold yellow]⚠[/] {msg}")
 
 
 def info(msg: str):
-    console.print(f"[dim]ℹ[/] {msg}")
+    err_console.print(f"[dim]ℹ[/] {msg}")
+
+
+class DyCliError(click.ClickException):
+    """命令级错误，退出码 1。
+
+    在命令回调内 raise：构造时读取当前 Click 上下文的 `as_json` 参数，
+    - TTY 模式：stderr 打印 `✗ message`
+    - --json-output：stdout 输出错误信封 {ok: false, error: {code, message}}
+    """
+
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+        ctx = click.get_current_context(silent=True)
+        self.as_json = bool(ctx and ctx.params.get("as_json"))
+
+    def show(self, file: IO[Any] | None = None) -> None:
+        if self.as_json:
+            click.echo(json.dumps(error_envelope(self.code, self.message), ensure_ascii=False, indent=2))
+        else:
+            error(self.message)
 
 
 def status(label: str, value: str, style: str = ""):
@@ -44,8 +71,7 @@ def status(label: str, value: str, style: str = ""):
 
 
 def print_json(data: Any, envelope: bool = True):
-    """输出 JSON。envelope=True 时包裹在统一信封中。"""
-    from dy_cli.utils.envelope import success_envelope
+    """输出 JSON 到 stdout。envelope=True 时包裹在统一信封中。"""
     output = success_envelope(data) if envelope else data
     console.print_json(json.dumps(output, ensure_ascii=False, indent=2))
 

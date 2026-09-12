@@ -11,7 +11,17 @@ import click
 
 from dy_cli.engines.api_client import DouyinAPIClient, DouyinAPIError
 from dy_cli.utils import config
-from dy_cli.utils.output import console, error, info, print_json, print_live_info, print_live_rooms, success, warning
+from dy_cli.utils.output import (
+    DyCliError,
+    console,
+    error,
+    info,
+    print_json,
+    print_live_info,
+    print_live_rooms,
+    success,
+    warning,
+)
 
 
 @click.group("live", help="📺 直播功能 (列出/查看/录制)")
@@ -37,8 +47,7 @@ def live_list(count, account, as_json):
             print_live_rooms(rooms)
 
     except DouyinAPIError as e:
-        error(f"获取直播房间失败: {e}")
-        raise SystemExit(1)
+        raise DyCliError("api_error", f"获取直播房间失败: {e}")
     finally:
         client.close()
 
@@ -72,8 +81,7 @@ def live_info(room_id, account, as_json):
                         console.print(f"  [{quality}] {url[:80]}…" if len(url) > 80 else f"  [{quality}] {url}")
 
     except DouyinAPIError as e:
-        error(f"获取直播信息失败: {e}")
-        raise SystemExit(1)
+        raise DyCliError("api_error", f"获取直播信息失败: {e}")
     finally:
         client.close()
 
@@ -92,8 +100,7 @@ def live_record(room_id, output, quality, account):
     """
     # Check ffmpeg
     if not shutil.which("ffmpeg"):
-        error("需要安装 ffmpeg: brew install ffmpeg (macOS)")
-        raise SystemExit(1)
+        raise DyCliError("missing_dependency", "需要安装 ffmpeg: brew install ffmpeg (macOS)")
 
     client = DouyinAPIClient.from_config(account)
 
@@ -104,8 +111,7 @@ def live_record(room_id, output, quality, account):
         # Check if live
         status_val = data.get("status")
         if status_val != 2:
-            error("直播间未开播或已结束")
-            raise SystemExit(1)
+            raise DyCliError("not_live", "直播间未开播或已结束")
 
         # Get stream URL
         stream_data = data.get("stream_url", {})
@@ -119,8 +125,7 @@ def live_record(room_id, output, quality, account):
             stream_url = urls.get(quality) or next(iter(urls.values()), None)
 
         if not stream_url:
-            error("未获取到拉流地址")
-            raise SystemExit(1)
+            raise DyCliError("api_error", "未获取到拉流地址")
 
         # Output file
         if not output:
@@ -159,7 +164,6 @@ def live_record(room_id, output, quality, account):
             error(f"ffmpeg 录制失败: {e}")
 
     except DouyinAPIError as e:
-        error(f"获取直播信息失败: {e}")
-        raise SystemExit(1)
+        raise DyCliError("api_error", f"获取直播信息失败: {e}")
     finally:
         client.close()

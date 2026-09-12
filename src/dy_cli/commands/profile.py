@@ -8,8 +8,8 @@ import click
 from dy_cli.engines.api_client import DouyinAPIClient, DouyinAPIError
 from dy_cli.engines.playwright_client import PlaywrightClient, PlaywrightError
 from dy_cli.utils.output import (
+    DyCliError,
     console,
-    error,
     info,
     print_json,
     print_user_profile,
@@ -26,21 +26,21 @@ def me(account, as_json):
     client = PlaywrightClient(account=account, headless=True)
 
     if not client.cookie_exists():
-        error("未登录，请先运行: dy login")
-        raise SystemExit(1)
+        raise DyCliError("not_authenticated", "未登录，请先运行: dy login")
 
     info("正在检查登录状态...")
     try:
         logged_in = client.check_login()
-        if logged_in:
-            success("已登录抖音 ✅")
-            console.print(f"  [bold]Cookie:[/] {client.cookie_file}")
-        else:
-            error("Cookie 已失效，请重新登录: dy login")
-            raise SystemExit(1)
     except PlaywrightError as e:
-        error(f"检查失败: {e}")
-        raise SystemExit(1)
+        raise DyCliError("playwright_error", f"检查失败: {e}")
+    if not logged_in:
+        raise DyCliError("not_authenticated", "Cookie 已失效，请重新登录: dy login")
+
+    if as_json:
+        print_json({"authenticated": True, "account": client.account, "cookie_file": client.cookie_file})
+        return
+    success("已登录抖音 ✅")
+    console.print(f"  [bold]Cookie:[/] {client.cookie_file}")
 
 
 @click.command("profile", help="查看用户主页")
@@ -56,27 +56,19 @@ def profile(sec_user_id, posts, post_count, account, as_json):
     try:
         info("正在获取用户资料...")
         user = client.get_user_profile(sec_user_id)
-
-        if as_json and not posts:
-            print_json(user)
-            return
-
-        print_user_profile(user)
-
-        # Load posts
+        aweme_list = None
         if posts:
             info("正在获取作品列表...")
-            post_data = client.get_user_posts(sec_user_id, count=post_count)
-            aweme_list = post_data.get("aweme_list", [])
-
-            if as_json:
-                print_json({"user": user, "posts": aweme_list})
-            else:
-                nickname = user.get("nickname", "")
-                print_videos(aweme_list, keyword=f"{nickname} 的作品")
-
+            aweme_list = client.get_user_posts(sec_user_id, count=post_count).get("aweme_list", [])
     except DouyinAPIError as e:
-        error(f"获取用户资料失败: {e}")
-        raise SystemExit(1)
+        raise DyCliError("api_error", f"获取用户资料失败: {e}")
     finally:
         client.close()
+
+    if as_json:
+        print_json(user if aweme_list is None else {"user": user, "posts": aweme_list})
+        return
+
+    print_user_profile(user)
+    if aweme_list is not None:
+        print_videos(aweme_list, keyword=f"{user.get('nickname', '')} 的作品")

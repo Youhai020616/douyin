@@ -11,7 +11,7 @@ from dy_cli.engines.playwright_client import PlaywrightClient, PlaywrightError
 from dy_cli.utils.export import export_data
 from dy_cli.utils.index_cache import resolve_id, save_index
 from dy_cli.utils.output import (
-    error,
+    DyCliError,
     info,
     print_comments,
     print_json,
@@ -66,8 +66,7 @@ def search(keyword, sort, pub_time, search_type, count, account, as_json, output
             count=count,
         )
     except DouyinAPIError as e:
-        error(f"搜索失败: {e}")
-        raise SystemExit(1)
+        raise DyCliError("api_error", f"搜索失败: {e}")
     finally:
         client.close()
 
@@ -162,38 +161,32 @@ def detail(aweme_id, comments, comment_count, account, as_json):
     try:
         aweme_id = resolve_id(aweme_id)
     except ValueError as e:
-        error(str(e))
-        raise SystemExit(1)
+        raise DyCliError("invalid_argument", str(e))
     client = DouyinAPIClient.from_config(account)
 
     try:
         info(f"正在获取详情: {aweme_id}")
         video_detail = client.get_video_detail(aweme_id)
-
-        if as_json and not comments:
-            print_json(video_detail)
-            return
-
-        print_video_detail(video_detail)
-
-        # Load comments if requested
-        if comments:
-            info("正在加载评论...")
-            try:
-                comment_list = PlaywrightClient(account=account, headless=True).get_comments(
-                    aweme_id, count=comment_count
-                )
-            except PlaywrightError as e:
-                warning(f"评论加载失败: {e}")
-                return
-
-            if as_json:
-                print_json({"detail": video_detail, "comments": comment_list})
-            else:
-                print_comments(comment_list)
-
     except DouyinAPIError as e:
-        error(f"获取详情失败: {e}")
-        raise SystemExit(1)
+        raise DyCliError("api_error", f"获取详情失败: {e}")
     finally:
         client.close()
+
+    if not comments:
+        print_json(video_detail) if as_json else print_video_detail(video_detail)
+        return
+
+    # 评论加载失败不阻断：详情照常输出，JSON 中 comments 为 null
+    info("正在加载评论...")
+    comment_list = None
+    try:
+        comment_list = PlaywrightClient(account=account, headless=True).get_comments(aweme_id, count=comment_count)
+    except PlaywrightError as e:
+        warning(f"评论加载失败: {e}")
+
+    if as_json:
+        print_json({"detail": video_detail, "comments": comment_list})
+    else:
+        print_video_detail(video_detail)
+        if comment_list is not None:
+            print_comments(comment_list)
