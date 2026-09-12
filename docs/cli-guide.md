@@ -106,7 +106,11 @@ dy download 1234567890                     # 视频 ID
 dy download URL --music                    # 同时下载 BGM
 dy download URL -o ~/Videos/douyin         # 指定目录
 dy download URL --json-output              # 仅输出链接
+dy download URL --list-quality             # 列出可用画质
+dy download URL -q 720                     # 指定画质 (auto/best/worst/2160/1440/1080/720/540)
 ```
+
+`-q auto`（默认）使用平台默认地址，与旧版行为一致；指定分辨率不存在时报错并列出可选项；同一分辨率取码率最高的档位。
 
 ### 发布
 

@@ -49,7 +49,8 @@
 
 | 类别 | 命令 | `data` 形态 |
 |---|---|---|
-| 查询 | `search` `detail` `comments` `download` `trending` `live list` `live info` `profile` `analytics` `notifications` | API 原始结果 |
+| 查询 | `search` `detail` `comments` `trending` `live list` `live info` `profile` `analytics` `notifications` | API 原始结果 |
+| | `download` | `{video_url, music_url, images, desc, author, aweme_id, quality, available_qualities}`；`quality` 在 `-q auto`（默认）或无画质信息时为 `null`；`available_qualities` 按分辨率、码率降序，每项 `{label, gear_name, bit_rate, width, height, codec}` |
 | 账号态 | `status` | `{authenticated, reason, account, cookie_file}`，`reason` ∈ `null` / `no_cookie` / `expired` / `check_failed` |
 | | `me` | `{authenticated: true, account, cookie_file}` |
 | | `login` | `{authenticated: true, method, account, cookie_file}`，`method` ∈ `existing` / `browser` / `qrcode`；已登录时不再交互询问 |

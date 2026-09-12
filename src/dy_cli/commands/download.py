@@ -12,29 +12,44 @@ from rich.progress import BarColumn, DownloadColumn, Progress, SpinnerColumn, Te
 from dy_cli.engines.api_client import DouyinAPIClient, DouyinAPIError
 from dy_cli.utils import config
 from dy_cli.utils.index_cache import resolve_id
-from dy_cli.utils.output import DyCliError, console, info, print_json, success, warning
+from dy_cli.utils.output import DyCliError, console, info, print_json, print_table, success, warning
 
 
-@click.command("download", help="下载抖音视频/图片 (无水印, 支持短索引/批量)")
+@click.command("download", help="下载抖音视频/图片 (无水印, 支持短索引/批量/画质选择)")
 @click.argument("url_or_id")
 @click.option("--output-dir", "-o", default=None, help="保存目录 (默认 ~/Downloads/douyin)")
 @click.option("--music", is_flag=True, help="同时下载背景音乐")
+@click.option(
+    "--quality", "-q",
+    type=click.Choice(DouyinAPIClient.QUALITY_CHOICES),
+    default="auto",
+    show_default=True,
+    help="视频画质: auto=平台默认, best/worst=最高/最低, 或指定分辨率 (不存在时报错)",
+)
+@click.option("--list-quality", is_flag=True, help="只列出可用画质，不下载")
 @click.option("--limit", type=int, default=0, help="批量下载: 用户作品数量 (需配合 --user)")
 @click.option("--user", is_flag=True, help="批量下载该用户的全部作品 (URL_OR_ID 为 sec_user_id)")
 @click.option("--account", default=None, help="使用指定账号")
-@click.option("--json-output", "as_json", is_flag=True, help="仅输出下载链接 (JSON)")
-def download(url_or_id, output_dir, music, limit, user, account, as_json):
+@click.option("--json-output", "as_json", is_flag=True, help="仅输出下载链接与画质信息 (JSON)")
+def download(url_or_id, output_dir, music, quality, list_quality, limit, user, account, as_json):
     """
-    下载抖音视频/图片（无水印）。支持短索引和批量下载。
+    下载抖音视频/图片（无水印）。支持短索引、批量下载和画质选择。
 
     单个下载:
       dy dl 1                          (搜索后用短索引)
       dy dl https://v.douyin.com/xxx   (分享链接)
       dy dl 1234567890                 (视频 ID)
 
+    画质:
+      dy dl 1 --list-quality           (列出可用画质)
+      dy dl 1 -q 720                   (下载 720p)
+
     批量下载用户作品:
       dy dl SEC_USER_ID --user --limit 20
     """
+    if user and list_quality:
+        raise DyCliError("invalid_argument", "--list-quality 不能与 --user 同时使用，请对单个视频查看画质")
+
     cfg = config.load_config()
     output_dir = output_dir or cfg["default"].get("download_dir", os.path.expanduser("~/Downloads/douyin"))
     os.makedirs(output_dir, exist_ok=True)
@@ -44,7 +59,7 @@ def download(url_or_id, output_dir, music, limit, user, account, as_json):
     try:
         # 批量下载用户作品
         if user:
-            _batch_download_user(client, url_or_id, output_dir, music, limit or 20, as_json)
+            _batch_download_user(client, url_or_id, output_dir, music, limit or 20, quality)
             return
 
         # Resolve aweme_id (支持短索引)
@@ -62,18 +77,32 @@ def download(url_or_id, output_dir, music, limit, user, account, as_json):
 
         # Get download info
         info("正在获取下载链接...")
-        dl_info = client.get_download_url(aweme_id)
+        try:
+            dl_info = client.get_download_url(aweme_id, quality=quality)
+        except ValueError as e:
+            raise DyCliError("invalid_argument", str(e))
 
         if as_json:
             print_json(dl_info)
             return
 
+        if list_quality:
+            _print_qualities(dl_info)
+            return
+
         desc = dl_info.get("desc", "untitled")
         author = dl_info.get("author", "unknown")
+        selected = dl_info.get("quality")
+        if selected:
+            info(f"画质: {selected['label']} {selected['gear_name']} ({selected['bit_rate'] // 1000} kbps, {selected['codec']})")
+        elif quality != "auto" and dl_info.get("video_url"):
+            warning("该视频无画质信息，已使用平台默认地址")
 
         # Sanitize filename
         safe_name = re.sub(r'[\\/:*?"<>|\n\r]', '_', desc)[:50].strip('_') or aweme_id
         prefix = f"{author}_{safe_name}"
+        if selected:
+            prefix = f"{prefix}_{selected['label']}"
 
         downloaded_files = []
 
@@ -122,15 +151,29 @@ def download(url_or_id, output_dir, music, limit, user, account, as_json):
         client.close()
 
 
+def _print_qualities(dl_info: dict) -> None:
+    """以表格列出可用画质。"""
+    qualities = dl_info.get("available_qualities") or []
+    if not qualities:
+        warning("该作品无画质信息" + ("（图文作品）" if dl_info.get("images") else ""))
+        return
+    rows = [
+        [q["label"], q["gear_name"] or "-", f"{q['bit_rate'] // 1000}", f"{q['width']}x{q['height']}", q["codec"]]
+        for q in qualities
+    ]
+    print_table(f"可用画质: {dl_info.get('aweme_id', '')}", ["画质", "gear", "码率 kbps", "分辨率", "编码"], rows)
+    info("使用 -q <画质> 下载，如: dy dl <ID> -q 720")
+
+
 def _batch_download_user(
     client: DouyinAPIClient,
     sec_user_id: str,
     output_dir: str,
     music: bool,
     limit: int,
-    as_json: bool,
+    quality: str = "auto",
 ):
-    """批量下载用户作品。"""
+    """批量下载用户作品。指定画质不可用的作品会跳过并警告。"""
     info(f"正在获取用户作品列表 (limit={limit})...")
     try:
         profile = client.get_user_profile(sec_user_id)
@@ -159,10 +202,11 @@ def _batch_download_user(
         safe = re.sub(r'[\\/:*?"<>|\n\r]', '_', desc)[:40].strip('_') or aweme_id
 
         try:
-            dl_info = client.get_download_url(aweme_id)
+            dl_info = client.get_download_url(aweme_id, quality=quality)
             video_url = dl_info.get("video_url")
             if video_url:
-                path = os.path.join(user_dir, f"{i:03d}_{safe}.mp4")
+                suffix = f"_{dl_info['quality']['label']}" if dl_info.get("quality") else ""
+                path = os.path.join(user_dir, f"{i:03d}_{safe}{suffix}.mp4")
                 if os.path.exists(path):
                     info(f"[{i}/{len(aweme_list)}] 已存在，跳过: {safe[:30]}")
                     continue

@@ -688,9 +688,65 @@ class DouyinAPIClient:
     # Download
     # ------------------------------------------------------------------
 
-    def get_download_url(self, aweme_id: str) -> dict[str, Any]:
+    # 画质选择：auto = 平台默认地址（与历史行为一致），其余从 video.bit_rate[] 中挑选
+    QUALITY_CHOICES = ("auto", "best", "worst", "2160", "1440", "1080", "720", "540")
+    _GEAR_RES_RE = re.compile(r"(?<!\d)(\d{3,4})(?!\d)")
+
+    @classmethod
+    def _parse_bit_rates(cls, video: dict[str, Any]) -> list[dict[str, Any]]:
+        """将 video.bit_rate 归一化为画质列表，按 (分辨率, 码率) 降序。
+
+        分辨率优先取 gear_name 中的 3-4 位数字（normal_1080_0 → 1080，540 档实际宽 576），
+        没有则用 play_addr 短边（adapt_lowest_4_1 → 2160）。
+        """
+        entries: list[dict[str, Any]] = []
+        for br in video.get("bit_rate") or []:
+            play_addr = br.get("play_addr") or {}
+            urls = play_addr.get("url_list") or []
+            if not urls:
+                continue
+            width, height = int(play_addr.get("width") or 0), int(play_addr.get("height") or 0)
+            gear = br.get("gear_name") or ""
+            m = cls._GEAR_RES_RE.search(gear)
+            resolution = int(m.group(1)) if m else min(width, height)
+            entries.append({
+                "label": f"{resolution}p" if resolution else "unknown",
+                "resolution": resolution,
+                "gear_name": gear or None,
+                "bit_rate": int(br.get("bit_rate") or 0),
+                "width": width,
+                "height": height,
+                "codec": "h265" if br.get("is_h265") else "h264",
+                "url": urls[-1].replace("playwm", "play"),
+            })
+        entries.sort(key=lambda e: (e["resolution"], e["bit_rate"]), reverse=True)
+        return entries
+
+    @staticmethod
+    def _select_quality(entries: list[dict[str, Any]], quality: str) -> dict[str, Any]:
+        """从已排序的画质列表中选择：best / worst / 指定分辨率（同分辨率取码率最高）。"""
+        if quality == "best":
+            return entries[0]
+        if quality == "worst":
+            return entries[-1]
+        want = int(quality)
+        for e in entries:
+            if e["resolution"] == want:
+                return e
+        available = ", ".join(dict.fromkeys(e["label"] for e in entries))
+        raise ValueError(f"画质 {quality}p 不可用，可选: {available}")
+
+    @staticmethod
+    def _public_quality(entry: dict[str, Any]) -> dict[str, Any]:
+        return {k: entry[k] for k in ("label", "gear_name", "bit_rate", "width", "height", "codec")}
+
+    def get_download_url(self, aweme_id: str, quality: str = "auto") -> dict[str, Any]:
         """
         获取无水印下载链接。
+
+        quality: 见 QUALITY_CHOICES。auto 使用平台默认 play_addr（历史行为）；
+                 其余从 bit_rate[] 中选择，指定分辨率不存在时抛 ValueError。
+                 视频无 bit_rate 信息时回退到默认地址，quality 为 None。
 
         Returns:
             {
@@ -699,8 +755,14 @@ class DouyinAPIClient:
                 "images": list[str] | None,
                 "desc": str,
                 "author": str,
+                "aweme_id": str,
+                "quality": {label, gear_name, bit_rate, width, height, codec} | None,
+                "available_qualities": [同上, ...],
             }
         """
+        if quality not in self.QUALITY_CHOICES:
+            raise ValueError(f"无效画质: {quality}，可选: {', '.join(self.QUALITY_CHOICES)}")
+
         detail = self.get_video_detail(aweme_id)
 
         result: dict[str, Any] = {
@@ -710,15 +772,25 @@ class DouyinAPIClient:
             "desc": detail.get("desc", ""),
             "author": detail.get("author", {}).get("nickname", ""),
             "aweme_id": aweme_id,
+            "quality": None,
+            "available_qualities": [],
         }
 
         # Video
         video = detail.get("video", {})
-        play_addr = video.get("play_addr", {})
-        url_list = play_addr.get("url_list", [])
-        if url_list:
-            # 取最后一个（通常是最高质量）
-            result["video_url"] = url_list[-1].replace("playwm", "play")
+        entries = self._parse_bit_rates(video)
+        result["available_qualities"] = [self._public_quality(e) for e in entries]
+
+        if quality != "auto" and entries:
+            selected = self._select_quality(entries, quality)
+            result["video_url"] = selected["url"]
+            result["quality"] = self._public_quality(selected)
+        else:
+            play_addr = video.get("play_addr", {})
+            url_list = play_addr.get("url_list", [])
+            if url_list:
+                # 平台默认地址，取最后一个
+                result["video_url"] = url_list[-1].replace("playwm", "play")
 
         # Images (for image posts)
         images = detail.get("images", [])
