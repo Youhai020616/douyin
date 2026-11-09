@@ -8,14 +8,17 @@ Douyin API Client — 逆向 API 采集客户端。
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
 import random
 import re
 import time
+import uuid
 from collections.abc import Callable
 from typing import Any
+from urllib.parse import urlencode
 
 import httpx
 
@@ -35,6 +38,7 @@ from dy_cli.utils.signature import (
 
 DOUYIN_DOMAIN = "https://www.douyin.com"
 API_DOMAIN = "https://www.douyin.com"
+COOKIE_DOMAIN = ".douyin.com"  # jar 中用户/自动 cookie 的统一归属域
 
 # API endpoints
 SEARCH_URL = f"{API_DOMAIN}/aweme/v1/web/general/search/single/"
@@ -61,6 +65,21 @@ SHARE_URL_PATTERN = re.compile(r"https?://(?:www\.)?(?:douyin\.com|iesdouyin\.co
 SHORT_URL_PATTERN = re.compile(r"https?://v\.douyin\.com/\w+/?")
 
 REQUEST_TIMEOUT = 30
+
+
+def _parse_cookie_string(cookie: str) -> dict[str, str]:
+    """解析 ``name=value; name2=value2`` 形式的 Cookie 字符串（值中允许含 ``=``）。"""
+    result: dict[str, str] = {}
+    for part in cookie.split(";"):
+        part = part.strip()
+        if not part or "=" not in part:
+            continue
+        name, _, value = part.partition("=")
+        name = name.strip()
+        if name:
+            result[name] = value.strip()
+    return result
+
 
 # 搜索通道映射: CLI search_type → 抖音 API search_channel
 SEARCH_CHANNEL_MAP = {
@@ -133,6 +152,7 @@ class DouyinAPIClient:
         self._base_delay: float = 1.0
         self._verify_count: int = 0
         self._max_retries: int = 3
+        self._uifid: str = ""
 
     # ------------------------------------------------------------------
     # HTTP client
@@ -150,6 +170,8 @@ class DouyinAPIClient:
                 **transport_kwargs,
             )
             self._init_cookies()
+            # 用户 cookie 最后写入，同名覆盖，保证用户提供的值优先
+            self._load_user_cookies()
         return self._client
 
     def _init_cookies(self) -> None:
@@ -172,6 +194,75 @@ class DouyinAPIClient:
             )
         except Exception:
             pass
+        # 注册接口把 ttwid 下发在 .bytedance.com 上，httpx 不会随 douyin.com
+        # 请求发送；需复制到 .douyin.com 才能真正生效（detail 端点强依赖）。
+        for ck in list(self._client.cookies.jar):
+            if ck.name == "ttwid" and ck.value and not ck.domain.endswith("douyin.com"):
+                self._client.cookies.set("ttwid", ck.value, domain=COOKIE_DOMAIN)
+                break
+
+    def _load_user_cookies(self) -> None:
+        """把用户提供的 cookie 字符串载入 jar（.douyin.com 域）。"""
+        if self._client is None or not self.cookie:
+            return
+        for name, value in _parse_cookie_string(self.cookie).items():
+            self._client.cookies.set(name, value, domain=COOKIE_DOMAIN)
+
+    def _cookie(self, name: str) -> str:
+        """从 jar 取 douyin.com 域下的 cookie 值，不存在返回空串。"""
+        for ck in self.client.cookies.jar:
+            if ck.name == name and ck.domain.endswith("douyin.com") and ck.value:
+                return ck.value
+        return ""
+
+    # ------------------------------------------------------------------
+    # x-secsdk-web-signature（detail 端点 2026-09 新增校验，
+    # 算法与 yt-dlp PR #17826 对齐：MD5(uifid_timestamp_salt_query)）
+    # ------------------------------------------------------------------
+
+    _SEC_SALT = "A96D855A08C0A9707F8BEF0D9A527E4E"
+    _WEB_AID = 6383
+
+    _UIFID_COOKIE_NAMES = ("uifid", "uifid_temp", "uifidtemp", "UIFID", "UIFID_TEMP", "UIFIDTEMP")
+
+    def _ensure_secsdk_cookies(self) -> None:
+        """detail 端点要求 ttwid + passport_csrf_token（后者任意值即可）。"""
+        if not self._cookie("passport_csrf_token"):
+            self.client.cookies.set("passport_csrf_token", uuid.uuid4().hex, domain=COOKIE_DOMAIN)
+
+    def _uifid_from_jar(self) -> str:
+        """从 jar 中按已知别名查找 uifid。"""
+        for name in self._UIFID_COOKIE_NAMES:
+            value = self._cookie(name)
+            if value:
+                return value
+        return ""
+
+    def _get_uifid(self) -> str:
+        """uifid：cookie 里有就用；没有则请求首页，从 x-tt-trace-host 响应头取。结果缓存。"""
+        value = self._uifid_from_jar()
+        if value:
+            self._uifid = value
+            return value
+        if self._uifid:
+            return self._uifid
+        try:
+            resp = self._request_with_retry("GET", f"{DOUYIN_DOMAIN}/", headers=get_headers())
+            # 首页可能顺带下发 uifid cookie；没有则退回响应头
+            value = self._uifid_from_jar() or resp.headers.get("x-tt-trace-host") or ""
+        except DouyinAPIError:
+            value = ""
+        self._uifid = value
+        return value
+
+    def _secsdk_sign(self, params: dict[str, Any]) -> dict[str, Any]:
+        """为 query 附加 uifid / timestamp / x-secsdk-web-signature。"""
+        uifid = self._get_uifid()
+        timestamp = str(int(time.time()))
+        query = {**params, "uifid": uifid, "timestamp": timestamp}
+        encoded = urlencode(query)
+        signature = hashlib.md5(f"{uifid}_{timestamp}_{self._SEC_SALT}_{encoded}".encode()).hexdigest()
+        return {**query, "x-secsdk-web-signature": signature}
 
     # ------------------------------------------------------------------
     # Rate limiting & anti-detection
@@ -242,15 +333,21 @@ class DouyinAPIClient:
         url: str,
         params: dict[str, str] | None = None,
         referer: str = "https://www.douyin.com/",
+        sign: bool = True,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """GET 请求，带签名、重试和反爬。"""
-        headers = get_headers(cookie=self.cookie, referer=referer)
+        """GET 请求，带签名、重试和反爬。
+
+        Cookie 统一由 client jar 携带（用户 cookie 已在 jar 初始化时载入），
+        不再显式设置 Cookie 头，避免屏蔽 jar 中的 ttwid / passport_csrf_token。
+        sign=False 跳过 X-Bogus 签名（secsdk 签名的端点追加 X-Bogus 会破坏 query 一致性）。
+        """
+        headers = get_headers(referer=referer)
 
         # 构建完整 URL 并签名（添加 X-Bogus / a-bogus 参数）
         if params:
             full_url = build_request_url(url, params)
-            signed_url = sign_url(full_url)
+            signed_url = sign_url(full_url) if sign else full_url
             # 签名后参数已包含在 URL 中，不再单独传 params
             resp = self._request_with_retry("GET", signed_url, headers=headers, **kwargs)
         else:
@@ -278,8 +375,8 @@ class DouyinAPIClient:
         return data
 
     def _post(self, url: str, data: dict[str, Any] | None = None, **kwargs: Any) -> dict[str, Any]:
-        """POST 请求，带重试和反爬。"""
-        headers = get_headers(cookie=self.cookie)
+        """POST 请求，带重试和反爬。Cookie 由 client jar 携带。"""
+        headers = get_headers()
         headers["Content-Type"] = "application/x-www-form-urlencoded"
         resp = self._request_with_retry("POST", url, data=data, headers=headers, **kwargs)
 
@@ -472,10 +569,15 @@ class DouyinAPIClient:
         # Primary: Web API
         try:
             params = {
-                **get_base_params(),
+                # detail 端点只接受极简参数集（设备参数/msToken 反而触发 403，
+                # 与 yt-dlp PR #17826 的最小可行请求一致）
                 "aweme_id": aweme_id,
+                "aid": self._WEB_AID,
             }
-            data = self._get(VIDEO_DETAIL_URL, params=params)
+            # 2026-09 起 detail 端点要求 x-secsdk-web-signature（算法与
+            # yt-dlp PR #17826 对齐），旧 X-Bogus 签名会被判空数据，故 sign=False。
+            self._ensure_secsdk_cookies()
+            data = self._get(VIDEO_DETAIL_URL, params=self._secsdk_sign(params), sign=False)
             if data.get("status_code") == 0:
                 aweme_detail = data.get("aweme_detail", {})
                 if aweme_detail:

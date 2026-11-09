@@ -187,3 +187,187 @@ class TestLiveRequest:
         assert params["action"] == "load_more"
         assert params["source_key"] == "web_homepage_hot_web_live_card"
         assert rooms == [{"web_rid": "123456", "data": {"title": "直播间"}}]
+
+
+# ----------------------------------------------------------------------
+# detail 端点：x-secsdk-web-signature + cookie jar 行为（PR #16）
+# ----------------------------------------------------------------------
+
+
+class _FakeResponse:
+    def __init__(self, payload: dict[str, object] | None = None, headers: dict[str, str] | None = None) -> None:
+        self._payload = payload or {}
+        self.headers = headers or {}
+        self.content = b"x"
+        self.status_code = 200
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self) -> dict[str, object]:
+        return self._payload
+
+
+def _offline_client(monkeypatch: pytest.MonkeyPatch, cookie: str = "", registered_ttwid: str = "") -> DouyinAPIClient:
+    """构造不触网的 client：模拟 ttwid 注册接口把 cookie 下发在 .bytedance.com。"""
+    import httpx
+
+    def fake_post(self: httpx.Client, *_args: object, **_kwargs: object) -> _FakeResponse:
+        if registered_ttwid:
+            self.cookies.set("ttwid", registered_ttwid, domain=".bytedance.com")
+        return _FakeResponse()
+
+    monkeypatch.setattr(httpx.Client, "post", fake_post)
+    return DouyinAPIClient(cookie=cookie)
+
+
+class TestCookieJar:
+    def test_parse_cookie_string_handles_equals_in_value_and_whitespace(self) -> None:
+        from dy_cli.engines.api_client import _parse_cookie_string
+
+        parsed = _parse_cookie_string(" a=1;  b=x==y ; ;broken; c= ")
+        assert parsed == {"a": "1", "b": "x==y", "c": ""}
+
+    def test_user_cookie_is_loaded_into_jar_and_sent_to_douyin(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        client = _offline_client(monkeypatch, cookie="sessionid=abc; UIFID=u123")
+
+        req = client.client.build_request("GET", "https://www.douyin.com/aweme/v1/web/aweme/detail/")
+        sent = req.headers.get("cookie") or ""
+
+        assert "sessionid=abc" in sent
+        assert "UIFID=u123" in sent
+
+    def test_registered_ttwid_is_rehomed_to_douyin_domain(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        client = _offline_client(monkeypatch, registered_ttwid="reg-ttwid")
+
+        assert client._cookie("ttwid") == "reg-ttwid"
+        req = client.client.build_request("GET", "https://www.douyin.com/aweme/v1/web/aweme/detail/")
+        assert "ttwid=reg-ttwid" in (req.headers.get("cookie") or "")
+
+    def test_user_ttwid_overrides_registered_ttwid(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        client = _offline_client(monkeypatch, cookie="ttwid=user-ttwid", registered_ttwid="reg-ttwid")
+
+        assert client._cookie("ttwid") == "user-ttwid"
+
+    def test_get_and_post_do_not_set_explicit_cookie_header(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        client = _offline_client(monkeypatch, cookie="sessionid=abc")
+        seen: list[dict[str, str]] = []
+
+        def fake_request(_method: str, _url: str, **kwargs: object) -> _FakeResponse:
+            headers = kwargs.get("headers")
+            assert isinstance(headers, dict)
+            seen.append(headers)
+            return _FakeResponse({"status_code": 0})
+
+        monkeypatch.setattr(client, "_request_with_retry", fake_request)
+        monkeypatch.setattr("dy_cli.engines.api_client.sign_url", lambda url: url)
+
+        _ = client._get("https://www.douyin.com/x", params={"a": "1"})
+        _ = client._post("https://www.douyin.com/y", data={"a": "1"})
+
+        assert len(seen) == 2
+        assert all("Cookie" not in h and "cookie" not in h for h in seen)
+
+
+class TestSecsdkSignature:
+    def test_ensure_secsdk_cookies_creates_csrf_once_and_respects_user_value(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        client = _offline_client(monkeypatch)
+        client._ensure_secsdk_cookies()
+        first = client._cookie("passport_csrf_token")
+        client._ensure_secsdk_cookies()
+        assert first and client._cookie("passport_csrf_token") == first
+
+        user_client = _offline_client(monkeypatch, cookie="passport_csrf_token=from-user")
+        user_client._ensure_secsdk_cookies()
+        assert user_client._cookie("passport_csrf_token") == "from-user"
+
+    def test_get_uifid_prefers_cookie_without_network(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        client = _offline_client(monkeypatch, cookie="UIFID_TEMP=from-cookie")
+
+        def boom(*_a: object, **_k: object) -> _FakeResponse:
+            raise AssertionError("should not hit network when uifid cookie exists")
+
+        monkeypatch.setattr(client, "_request_with_retry", boom)
+        assert client._get_uifid() == "from-cookie"
+
+    def test_get_uifid_falls_back_to_trace_header_and_caches(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        client = _offline_client(monkeypatch)
+        calls: list[str] = []
+
+        def fake_request(method: str, url: str, **_kwargs: object) -> _FakeResponse:
+            calls.append(url)
+            return _FakeResponse(headers={"x-tt-trace-host": "trace-uifid"})
+
+        monkeypatch.setattr(client, "_request_with_retry", fake_request)
+
+        assert client._get_uifid() == "trace-uifid"
+        assert client._get_uifid() == "trace-uifid"
+        assert calls == ["https://www.douyin.com/"]
+
+    def test_secsdk_sign_is_deterministic_and_matches_algorithm(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import hashlib
+        from urllib.parse import urlencode
+
+        client = _offline_client(monkeypatch)
+        monkeypatch.setattr(client, "_get_uifid", lambda: "UIFID-X")
+        monkeypatch.setattr("dy_cli.engines.api_client.time.time", lambda: 1_700_000_000)
+
+        signed = client._secsdk_sign({"aweme_id": "123", "aid": 6383})
+
+        query = {"aweme_id": "123", "aid": 6383, "uifid": "UIFID-X", "timestamp": "1700000000"}
+        expected = hashlib.md5(
+            f"UIFID-X_1700000000_{DouyinAPIClient._SEC_SALT}_{urlencode(query)}".encode()
+        ).hexdigest()
+        assert signed == {**query, "x-secsdk-web-signature": expected}
+
+    def test_get_skips_xbogus_when_sign_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        client = _offline_client(monkeypatch)
+        sign_calls: list[str] = []
+        urls: list[str] = []
+
+        def fake_sign(url: str) -> str:
+            sign_calls.append(url)
+            return url + "&X-Bogus=zzz"
+
+        monkeypatch.setattr("dy_cli.engines.api_client.sign_url", fake_sign)
+
+        def fake_request(_method: str, url: str, **_kwargs: object) -> _FakeResponse:
+            urls.append(url)
+            return _FakeResponse({"status_code": 0})
+
+        monkeypatch.setattr(client, "_request_with_retry", fake_request)
+
+        _ = client._get("https://www.douyin.com/a", params={"k": "v"}, sign=False)
+        _ = client._get("https://www.douyin.com/b", params={"k": "v"})
+
+        assert sign_calls == ["https://www.douyin.com/b?k=v"]
+        assert urls == ["https://www.douyin.com/a?k=v", "https://www.douyin.com/b?k=v&X-Bogus=zzz"]
+
+    def test_video_detail_uses_minimal_signed_query_without_xbogus(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from dy_cli.engines.api_client import VIDEO_DETAIL_URL
+
+        client = _offline_client(monkeypatch, cookie="UIFID=u1")
+        captured: dict[str, object] = {}
+
+        def fake_get(url: str, params: dict[str, object] | None = None, **kwargs: object) -> dict[str, object]:
+            captured.update(url=url, params=params, kwargs=kwargs)
+            return {"status_code": 0, "aweme_detail": {"aweme_id": "123"}}
+
+        monkeypatch.setattr(client, "_get", fake_get)
+
+        detail = client.get_video_detail("123")
+
+        assert detail == {"aweme_id": "123"}
+        assert captured["url"] == VIDEO_DETAIL_URL
+        kwargs = captured["kwargs"]
+        assert isinstance(kwargs, dict) and kwargs.get("sign") is False
+        params = captured["params"]
+        assert isinstance(params, dict)
+        assert set(params) == {"aweme_id", "aid", "uifid", "timestamp", "x-secsdk-web-signature"}
+        assert params["aweme_id"] == "123"
+        assert params["aid"] == 6383
+        assert params["uifid"] == "u1"
+        assert "msToken" not in params and "device_platform" not in params
+        assert client._cookie("passport_csrf_token")
